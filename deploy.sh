@@ -4,4 +4,4 @@
 git pull origin main
 
 # Rebuild and restart the container
-docker-compose up -d --build
+docker compose up -d --build
