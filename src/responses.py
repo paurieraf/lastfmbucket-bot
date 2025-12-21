@@ -1,6 +1,6 @@
 from string import Template
 
-start_response_template = Template("""
+start_response = Template("""
 Hi @$username, welcome to LastfmBucket Bot! $setup_lastfm_user
 
 The code of this bot is public: https://github.com/paurieraf/lastfmbucket-bot 
@@ -8,41 +8,41 @@ The code of this bot is public: https://github.com/paurieraf/lastfmbucket-bot
 Use /privacy for any privacy-related questions
 """)
 
-lastfm_username_set_template = Template("""
+lastfm_username_set = Template("""
 ✅ Last.fm username @$lastfm_username set
 """)
 
-lastfm_username_set_user_not_found_template = Template("""
+lastfm_username_set_user_not_found = Template("""
 🚫 No Last.fm user has been found with this username: @$lastfm_username
 """)
 
-user_not_found_template = Template("""
+user_not_found = Template("""
 🔎 No Last.fm set for your user. Use /set [username] to set your Last.fm username
 """)
 
-now_playing_template = Template("""
+now_playing = Template("""
 @$lastfm_username is currently playing:
 🎧 <i>$track_artist</i>  — <strong><a href='$track_url'>$track_title</a></strong>, [$track_album]
 """)
 
-now_playing_no_currently_playing_template = Template("""
+now_playing_no_currently_playing = Template("""
 <strong>$lastfm_username</strong> is not currently playing music
 """)
 
-recent_tracks_template = Template("""
+recent_tracks = Template("""
 $telegram_user_first_name is now listening to
 $recent_tracks_list
 """)
 
-tops_choose_entity_type_template = Template("""
+tops_choose_entity_type = Template("""
 Choose the type of top you want to see:
 """)
 
-tops_choose_period_template = Template("""
+tops_choose_period = Template("""
 Choose the period for $entity_type:
 """)
 
-tops_list_template = Template("""
+tops_list = Template("""
 Top $entity_type for $period for <a href="https://www.last.fm/user/$lastfm_username">$lastfm_username</a>:
 
 $tops_list
@@ -52,12 +52,7 @@ tops_no_available_response = Template("""
 There are no tops available for this user: $lastfm_username
 """)
 
-help_template = Template("""
-These commands are available:
-$commands
-""")
-
-privacy_template = Template("""\
+privacy = Template("""\
 <b>Privacy Policy</b>
 This bot is a hobby project and is not a commercial product.
 
@@ -80,10 +75,10 @@ This bot is a hobby project and is not a commercial product.
 For any questions or concerns, please contact the developer.
 """)
 
-preferences_template = Template("""
+preferences= Template("""
 What do you want to do?
 """)
 
-preferences_unlink_account_template = Template("""
+preferences_unlink_account = Template("""
 Your account has been unlinked
 """)

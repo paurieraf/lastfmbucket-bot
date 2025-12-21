@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    container_name: lastfmbucket-bot
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - lastfmbucket-bot-data:/app/data
+
+volumes:
+  lastfmbucket-bot-data:
