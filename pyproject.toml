@@ -13,6 +13,7 @@ dependencies = [
     "ruff==0.14.10",
     "sentry-sdk==2.48.0",
     "nicegui>=2.0.0",
+    "peewee-migrate>=1.12.0",
 ]
 
 exclude = [
