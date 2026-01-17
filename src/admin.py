@@ -105,8 +105,7 @@ def dashboard():
         # Recent commands
         ui.label("Recent Commands").classes("text-xl font-bold mt-6 mb-2")
         recent_commands = (
-            CommandLog.select(CommandLog, Chat)
-            .join(Chat, on=(CommandLog.chat == Chat.id), join_type="LEFT")
+            CommandLog.select()
             .order_by(CommandLog.timestamp.desc())
             .limit(10)
         )
@@ -297,7 +296,7 @@ def logs_page():
             user_filter = ui.input("Filter by username").classes("w-48")
 
             def apply_filters():
-                query = CommandLog.select(CommandLog, Chat).join(Chat, on=(CommandLog.chat == Chat.id), join_type="LEFT").order_by(CommandLog.timestamp.desc())
+                query = CommandLog.select().order_by(CommandLog.timestamp.desc())
                 if command_filter.value:
                     query = query.where(CommandLog.command.contains(command_filter.value))
                 if user_filter.value:
@@ -352,7 +351,7 @@ def logs_page():
             },
         ]
 
-        logs = CommandLog.select(CommandLog, Chat).join(Chat, on=(CommandLog.chat == Chat.id), join_type="LEFT").order_by(CommandLog.timestamp.desc()).limit(100)
+        logs = CommandLog.select().order_by(CommandLog.timestamp.desc()).limit(100)
         rows = [
             {
                 "time": format_timestamp(c.timestamp),
