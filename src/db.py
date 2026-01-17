@@ -68,32 +68,6 @@ DB Connection
 db.connect()
 db.create_tables(MODELS, safe=True)
 
-
-def run_migrations():
-    """Run pending database migrations."""
-    import os
-    from pathlib import Path
-
-    from peewee_migrate import Router
-
-    migrations_dir = Path(__file__).parent / "migrations"
-    if not migrations_dir.exists():
-        logging.info("No migrations directory found, skipping migrations")
-        return
-
-    router = Router(db, migrate_dir=str(migrations_dir))
-
-    # Run all pending migrations
-    pending = router.diff
-    if pending:
-        logging.info(f"Running {len(pending)} pending migrations: {pending}")
-        router.run()
-    else:
-        logging.info("No pending migrations")
-
-
-run_migrations()
-
 """
 DB Methods
 """
