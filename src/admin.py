@@ -105,14 +105,18 @@ def dashboard():
         # Recent commands
         ui.label("Recent Commands").classes("text-xl font-bold mt-6 mb-2")
         recent_commands = (
-            CommandLog.select().order_by(CommandLog.timestamp.desc()).limit(10)
+            CommandLog.select(CommandLog, Chat)
+            .join(Chat, on=(CommandLog.chat == Chat.id), join_type="LEFT")
+            .order_by(CommandLog.timestamp.desc())
+            .limit(10)
         )
         columns = [
             {"name": "time", "label": "Time", "field": "time", "align": "left"},
             {"name": "command", "label": "Command", "field": "command", "align": "left"},
             {"name": "username", "label": "User", "field": "username", "align": "left"},
             {"name": "args", "label": "Args", "field": "args", "align": "left"},
-            {"name": "chat_type", "label": "Chat Type", "field": "chat_type", "align": "left"},
+            {"name": "chat_name", "label": "Chat", "field": "chat_name", "align": "left"},
+            {"name": "chat_type", "label": "Type", "field": "chat_type", "align": "left"},
         ]
         rows = [
             {
@@ -120,7 +124,8 @@ def dashboard():
                 "command": c.command,
                 "username": c.username,
                 "args": c.args or "-",
-                "chat_type": c.chat_type,
+                "chat_name": c.chat.telegram_chat_name if c.chat else "-",
+                "chat_type": c.chat.chat_type if c.chat else "-",
             }
             for c in recent_commands
         ]
