@@ -34,6 +34,7 @@ HELP_COMMAND = "help"
 CHANGELOG_COMMAND = "changelog"
 SET_COMMAND = "set"
 PRIVACY_COMMAND = "privacy"
+COMPARE_COMMAND = "compare"
 
 
 async def _handle_np_less(
@@ -331,12 +332,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def changelog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """TODO: Implement changelog command."""
+    """Displays the changelog."""
     logger.info(
         f"username: {update.message.from_user.username} "
         f"- issued command: {update.message.text}"
     )
-    await update.message.reply_text("Hello!")
+    view_service: ViewService = context.bot_data["view_service"]
+    response = await view_service.build_changelog_response()
+    await update.message.reply_html(response)
 
 
 async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -348,3 +351,23 @@ async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     view_service: ViewService = context.bot_data["view_service"]
     message = await view_service.build_privacy_response()
     await update.message.reply_html(message)
+
+
+async def compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Compares listening stats between the user and another Last.fm user."""
+    logger.info(
+        f"username: {update.message.from_user.username} "
+        f"- issued command: {update.message.text}"
+    )
+    if not context.args:
+        await update.message.reply_text(
+            "Please provide a Last.fm username. Usage: /compare <lastfm_username>"
+        )
+        return
+
+    other_username = context.args[0]
+    view_service: ViewService = context.bot_data["view_service"]
+    response = await view_service.build_compare_response(
+        update.message.from_user.id, other_username
+    )
+    await update.message.reply_html(response)

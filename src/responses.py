@@ -82,3 +82,26 @@ What do you want to do?
 preferences_unlink_account = Template("""
 Your account has been unlinked
 """)
+
+compare_stats = Template("""
+<b>📊 Comparison: $user1 vs $user2</b>
+
+<b>Total Scrobbles</b>
+$user1: $playcount1
+$user2: $playcount2
+
+<b>🎤 Common Artists ($common_count)</b>
+$common_artists
+
+<b>Top Artists</b>
+<u>$user1</u>: $top_artists1
+<u>$user2</u>: $top_artists2
+""")
+
+compare_user_not_found = Template("""
+🔎 Last.fm user not found: $username
+""")
+
+compare_no_lastfm_set = Template("""
+🔎 You need to set your Last.fm username first. Use /set [username]
+""")

@@ -12,6 +12,7 @@ import telegram
 from emoji import emojize
 from telegram import InlineKeyboardButton
 
+import config
 import db
 import lastfm
 import responses
@@ -370,6 +371,18 @@ class ViewService:
         """Builds the privacy policy response."""
         return responses.privacy.substitute()
 
+    @staticmethod
+    async def build_changelog_response() -> str:
+        """Builds the changelog response by reading CHANGELOG.md."""
+        try:
+            changelog_content = config.CHANGELOG_PATH.read_text(encoding="utf-8")
+            max_length = 4000
+            if len(changelog_content) > max_length:
+                changelog_content = changelog_content[:max_length] + "\n\n... (truncated)"
+            return f"<pre>{changelog_content}</pre>"
+        except FileNotFoundError:
+            return "Changelog not available."
+
     async def build_preferences_response(
         self, telegram_user_id: int
     ) -> tuple[str, telegram.InlineKeyboardMarkup]:
@@ -389,3 +402,54 @@ class ViewService:
         """Builds the preferences unlink account response."""
         self.lastfm_service.unlink_user(telegram_user_id)
         return emojize(responses.preferences_unlink_account.substitute())
+
+    async def build_compare_response(
+        self, telegram_user_id: int, other_lastfm_username: str
+    ) -> str:
+        """Builds the compare response between two users."""
+        user = db.get_user(telegram_user_id)
+        if not user:
+            return emojize(responses.compare_no_lastfm_set.substitute())
+
+        my_stats = self.lastfm_service._lastfm_client.get_user_stats(user.lastfm_username)
+        other_stats = self.lastfm_service._lastfm_client.get_user_stats(other_lastfm_username)
+
+        if not my_stats:
+            return emojize(
+                responses.compare_user_not_found.substitute(username=user.lastfm_username)
+            )
+        if not other_stats:
+            return emojize(
+                responses.compare_user_not_found.substitute(username=other_lastfm_username)
+            )
+
+        common_artists = self.lastfm_service._lastfm_client.get_common_artists(
+            user.lastfm_username, other_lastfm_username
+        )
+
+        if common_artists:
+            common_artists_text = "\n".join(
+                f"• {a['name']} ({a['plays1']:,} / {a['plays2']:,})"
+                for a in common_artists
+            )
+        else:
+            common_artists_text = "None found"
+
+        top_artists1_text = ", ".join(
+            f"{a['name']} ({a['plays']:,})" for a in my_stats["top_artists"][:3]
+        )
+        top_artists2_text = ", ".join(
+            f"{a['name']} ({a['plays']:,})" for a in other_stats["top_artists"][:3]
+        )
+
+        response = responses.compare_stats.substitute(
+            user1=my_stats["username"],
+            user2=other_stats["username"],
+            playcount1=f"{my_stats['playcount']:,}",
+            playcount2=f"{other_stats['playcount']:,}",
+            common_count=len(common_artists),
+            common_artists=common_artists_text,
+            top_artists1=top_artists1_text,
+            top_artists2=top_artists2_text,
+        )
+        return emojize(response)

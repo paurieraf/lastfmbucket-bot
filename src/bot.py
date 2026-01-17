@@ -47,6 +47,7 @@ def main() -> None:
     app.add_handler(CommandHandler(commands.CHANGELOG_COMMAND, commands.changelog))
     app.add_handler(CommandHandler(commands.SET_COMMAND, commands.lastfm_username_set))
     app.add_handler(CommandHandler(commands.PRIVACY_COMMAND, commands.privacy))
+    app.add_handler(CommandHandler(commands.COMPARE_COMMAND, commands.compare))
 
     app.add_handler(CallbackQueryHandler(commands.button_handler))
 
