@@ -48,6 +48,9 @@ def main() -> None:
     app.add_handler(CommandHandler(commands.SET_COMMAND, commands.lastfm_username_set))
     app.add_handler(CommandHandler(commands.PRIVACY_COMMAND, commands.privacy))
     app.add_handler(CommandHandler(commands.COMPARE_COMMAND, commands.compare))
+    app.add_handler(CommandHandler(commands.VIBE_COMMAND, commands.vibe))
+    app.add_handler(CommandHandler(commands.ROAST_COMMAND, commands.roast))
+    app.add_handler(CommandHandler(commands.RECOMMEND_COMMAND, commands.recommend))
 
     app.add_handler(CallbackQueryHandler(commands.button_handler))
 

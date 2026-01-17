@@ -15,6 +15,7 @@ from telegram import LinkPreviewOptions, Update
 from telegram.ext import ContextTypes
 
 import db
+import ai
 import lastfm
 from callbacks import Action, Callback
 from services import ViewService
@@ -64,6 +65,9 @@ CHANGELOG_COMMAND = "changelog"
 SET_COMMAND = "set"
 PRIVACY_COMMAND = "privacy"
 COMPARE_COMMAND = "compare"
+VIBE_COMMAND = "vibe"
+ROAST_COMMAND = "roast"
+RECOMMEND_COMMAND = "recommend"
 
 
 async def _handle_np_less(
@@ -410,3 +414,103 @@ async def compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update.message.from_user.id, other_username
     )
     await update.message.reply_html(response)
+
+
+@log_command(VIBE_COMMAND)
+async def vibe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generates an AI description of the user's current listening vibe."""
+    logger.info(
+        f"username: {update.message.from_user.username} "
+        f"- issued command: {update.message.text}"
+    )
+    user_id = update.message.from_user.id
+    lastfm_service = context.bot_data["view_service"].lastfm_service
+
+    # Get recent tracks
+    recent_tracks = lastfm_service.get_recent_tracks(user_id)
+    if not recent_tracks:
+        await update.message.reply_text(
+            "Couldn't find your recent tracks. Make sure your Last.fm is set up with /set"
+        )
+        return
+
+    await update.message.reply_text("🎵 Analyzing your vibe...")
+
+    # Format tracks for AI
+    track_list = [
+        f"{t.track.artist.name} - {t.track.title}" for t in recent_tracks[:10]
+    ]
+    current = track_list[0] if track_list else None
+
+    # Generate vibe
+    vibe_text = ai.generate_vibe(track_list, current)
+    await update.message.reply_text(f"🎧 *Your Vibe*\n\n{vibe_text}", parse_mode="Markdown")
+
+
+@log_command(ROAST_COMMAND)
+async def roast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generates a humorous AI roast of the user's music taste."""
+    logger.info(
+        f"username: {update.message.from_user.username} "
+        f"- issued command: {update.message.text}"
+    )
+    user_id = update.message.from_user.id
+    lastfm_service = context.bot_data["view_service"].lastfm_service
+
+    # Get top artists and tracks
+    top_artists = lastfm_service.get_tops(
+        user_id, lastfm.EntityType.ARTIST, lastfm.Period.OVERALL
+    )
+    top_tracks = lastfm_service.get_tops(
+        user_id, lastfm.EntityType.TRACK, lastfm.Period.OVERALL
+    )
+
+    if not top_artists:
+        await update.message.reply_text(
+            "Couldn't find your top artists. Make sure your Last.fm is set up with /set"
+        )
+        return
+
+    await update.message.reply_text("🔥 Preparing your roast...")
+
+    # Format for AI
+    artists_list = [item.item.name for item in top_artists[:10]]
+    tracks_list = [f"{item.item.artist} - {item.item.title}" for item in (top_tracks or [])[:5]]
+
+    # Generate roast
+    roast_text = ai.generate_roast(artists_list, tracks_list)
+    await update.message.reply_text(f"🎤 *Music Taste Roast*\n\n{roast_text}", parse_mode="Markdown")
+
+
+@log_command(RECOMMEND_COMMAND)
+async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generates AI-powered music recommendations."""
+    logger.info(
+        f"username: {update.message.from_user.username} "
+        f"- issued command: {update.message.text}"
+    )
+    user_id = update.message.from_user.id
+    lastfm_service = context.bot_data["view_service"].lastfm_service
+
+    # Get top artists
+    top_artists = lastfm_service.get_tops(
+        user_id, lastfm.EntityType.ARTIST, lastfm.Period.OVERALL
+    )
+
+    if not top_artists:
+        await update.message.reply_text(
+            "Couldn't find your top artists. Make sure your Last.fm is set up with /set"
+        )
+        return
+
+    await update.message.reply_text("🎵 Finding recommendations for you...")
+
+    # Format for AI
+    artists_list = [item.item.name for item in top_artists[:10]]
+
+    # Generate recommendations
+    rec_text = ai.generate_recommendations(artists_list)
+    await update.message.reply_text(
+        f"💡 *Recommendations Based On Your Taste*\n\n{rec_text}",
+        parse_mode="Markdown",
+    )

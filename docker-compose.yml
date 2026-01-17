@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data
+    depends_on:
+      - ollama
 
   admin:
     build: .
@@ -23,6 +25,23 @@ services:
       - default
       - navidrome-orchestra_caddy-with-admin
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: lastfmbucket-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
 networks:
   navidrome-orchestra_caddy-with-admin:
     external: true
+
+volumes:
+  ollama_data:
