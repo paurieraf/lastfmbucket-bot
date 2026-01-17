@@ -44,6 +44,7 @@ def log_command(command_name: str) -> Callable:
                     args=" ".join(context.args) if context.args else "",
                     chat_id=message.chat_id,
                     chat_type=message.chat.type,
+                    chat_name=message.chat.title or message.chat.username or "",
                 )
             return await func(update, context, *args, **kwargs)
 

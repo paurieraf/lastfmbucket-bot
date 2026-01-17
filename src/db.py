@@ -1,6 +1,6 @@
 import logging
 
-from peewee import BigIntegerField, CharField, Model
+from peewee import BigIntegerField, CharField, ForeignKeyField, Model
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 import config
@@ -42,6 +42,7 @@ class User(Model):
 class Chat(Model):
     telegram_id = BigIntegerField(unique=True)
     telegram_chat_name = CharField(default="")
+    chat_type = CharField(default="")  # private, group, supergroup, channel
 
     class Meta:
         database = db
@@ -52,8 +53,7 @@ class CommandLog(Model):
     username = CharField(default="")
     command = CharField()
     args = CharField(default="")
-    chat_id = BigIntegerField()
-    chat_type = CharField(default="")  # private, group, supergroup, channel
+    chat = ForeignKeyField(Chat, backref="command_logs", null=True)
     timestamp = BigIntegerField()  # Unix timestamp
 
     class Meta:
@@ -148,21 +148,38 @@ def log_command(
     args: str,
     chat_id: int,
     chat_type: str,
+    chat_name: str = "",
 ) -> CommandLog:
     """Logs a command execution to the database."""
     import time
 
     with db.atomic():
+        chat = get_or_create_chat(chat_id, chat_name, chat_type)
         log_entry = CommandLog.create(
             user_id=user_id,
             username=username,
             command=command,
             args=args,
-            chat_id=chat_id,
-            chat_type=chat_type,
+            chat=chat,
             timestamp=int(time.time()),
         )
     return log_entry
+
+
+def get_or_create_chat(
+    telegram_chat_id: int, chat_name: str = "", chat_type: str = ""
+) -> Chat:
+    """Gets or creates a chat entry in the database."""
+    with db.atomic():
+        chat, created = Chat.get_or_create(
+            telegram_id=telegram_chat_id,
+            defaults={"telegram_chat_name": chat_name, "chat_type": chat_type},
+        )
+        if not created and (chat.telegram_chat_name != chat_name or chat.chat_type != chat_type):
+            chat.telegram_chat_name = chat_name
+            chat.chat_type = chat_type
+            chat.save()
+    return chat
 
 
 def create_or_update_chat(telegram_chat_id: int, telegram_chat_name: str) -> Chat:

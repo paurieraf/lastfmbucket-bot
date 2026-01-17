@@ -245,6 +245,7 @@ def chats_page():
                 "field": "telegram_chat_name",
                 "align": "left",
             },
+            {"name": "chat_type", "label": "Type", "field": "chat_type", "align": "left"},
         ]
 
         chats = Chat.select().order_by(Chat.id.desc())
@@ -253,6 +254,7 @@ def chats_page():
                 "id": c.id,
                 "telegram_id": c.telegram_id,
                 "telegram_chat_name": c.telegram_chat_name or "-",
+                "chat_type": c.chat_type or "-",
             }
             for c in chats
         ]
@@ -290,7 +292,7 @@ def logs_page():
             user_filter = ui.input("Filter by username").classes("w-48")
 
             def apply_filters():
-                query = CommandLog.select().order_by(CommandLog.timestamp.desc())
+                query = CommandLog.select(CommandLog, Chat).join(Chat, on=(CommandLog.chat == Chat.id), join_type="LEFT").order_by(CommandLog.timestamp.desc())
                 if command_filter.value:
                     query = query.where(CommandLog.command.contains(command_filter.value))
                 if user_filter.value:
@@ -303,8 +305,8 @@ def logs_page():
                         "command": c.command,
                         "username": c.username or "-",
                         "args": c.args or "-",
-                        "chat_type": c.chat_type,
-                        "chat_id": c.chat_id,
+                        "chat_name": c.chat.telegram_chat_name if c.chat else "-",
+                        "chat_type": c.chat.chat_type if c.chat else "-",
                     }
                     for c in query
                 ]
@@ -335,25 +337,25 @@ def logs_page():
                 "sortable": True,
             },
             {"name": "args", "label": "Args", "field": "args", "align": "left"},
+            {"name": "chat_name", "label": "Chat", "field": "chat_name", "align": "left"},
             {
                 "name": "chat_type",
-                "label": "Chat Type",
+                "label": "Type",
                 "field": "chat_type",
                 "align": "left",
                 "sortable": True,
             },
-            {"name": "chat_id", "label": "Chat ID", "field": "chat_id", "align": "left"},
         ]
 
-        logs = CommandLog.select().order_by(CommandLog.timestamp.desc()).limit(100)
+        logs = CommandLog.select(CommandLog, Chat).join(Chat, on=(CommandLog.chat == Chat.id), join_type="LEFT").order_by(CommandLog.timestamp.desc()).limit(100)
         rows = [
             {
                 "time": format_timestamp(c.timestamp),
                 "command": c.command,
                 "username": c.username or "-",
                 "args": c.args or "-",
-                "chat_type": c.chat_type,
-                "chat_id": c.chat_id,
+                "chat_name": c.chat.telegram_chat_name if c.chat else "-",
+                "chat_type": c.chat.chat_type if c.chat else "-",
             }
             for c in logs
         ]
