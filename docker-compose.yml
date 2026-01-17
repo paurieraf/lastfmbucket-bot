@@ -19,22 +19,10 @@ services:
     command: python admin.py
     environment:
       - ADMIN_PORT=8080
+    networks:
+      - default
+      - navidrome-orchestra_caddy-with-admin
 
-  caddy:
-    image: caddy:2-alpine
-    container_name: lastfmbucket-caddy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - admin
-
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  navidrome-orchestra_caddy-with-admin:
+    external: true
