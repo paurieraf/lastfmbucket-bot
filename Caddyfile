@@ -1,0 +1,4 @@
+# Admin dashboard with automatic HTTPS
+lastfmbucketbot-admin.musicbucket.net {
+    reverse_proxy admin:8080
+}
