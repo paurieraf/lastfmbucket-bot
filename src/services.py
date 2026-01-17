@@ -251,16 +251,17 @@ class ViewService:
             )
         reply_markup = telegram.InlineKeyboardMarkup(keyboard)
         last_played_track = recent_tracks[0].track
-        last_played_track_album = last_played_track.get_album()
-        return (
-            emojize(response),
-            reply_markup,
-            last_played_track_album.get_cover_image()
-            if last_played_track_album
-            else None
-            if show_cover
-            else None,
-        )
+
+        cover_url = None
+        if show_cover:
+            try:
+                last_played_track_album = last_played_track.get_album()
+                if last_played_track_album:
+                    cover_url = last_played_track_album.get_cover_image()
+            except Exception:
+                pass  # Track not found or no album info
+
+        return emojize(response), reply_markup, cover_url
 
     async def build_tops_response(
         self,
