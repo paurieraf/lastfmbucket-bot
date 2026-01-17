@@ -128,15 +128,24 @@ async def now_playing(
         user_id, show_cover
     )
 
-    if from_button and show_cover and cover_url:
-        await message.edit_media(
-            telegram.InputMediaPhoto(
-                media=cover_url,
-                caption=response,
+    if from_button and show_cover:
+        if cover_url:
+            await message.edit_media(
+                telegram.InputMediaPhoto(
+                    media=cover_url,
+                    caption=response,
+                    parse_mode=telegram.constants.ParseMode.HTML,
+                ),
+                reply_markup=reply_markup,
+            )
+        else:
+            # No cover available - just edit the text and remove the cover button
+            await message.edit_text(
+                response,
+                reply_markup=reply_markup,
                 parse_mode=telegram.constants.ParseMode.HTML,
-            ),
-            reply_markup=reply_markup,
-        )
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
     else:
         await message.reply_html(
             response,
