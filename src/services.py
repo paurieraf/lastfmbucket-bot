@@ -109,13 +109,29 @@ class LastfmService:
 class ViewService:
     """Returns a formatted response string for every command"""
 
-    NOW_PLAYING_LESS_INFO = "now_playing_less_info"
-    NOW_PLAYING_LESS_INFO_SHOW_COVER = "now_playing_less_info_show_cover"
-    NOW_PLAYING_MORE_INFO = "now_playing_more_info"
-    NOW_PLAYING_REFRESH = "now_playing_refresh"
+    NOW_PLAYING_LESS_INFO = "np_less"
+    NOW_PLAYING_LESS_INFO_SHOW_COVER = "np_less_cover"
+    NOW_PLAYING_MORE_INFO = "np_more"
+    NOW_PLAYING_REFRESH = "np_refresh"
     PREFERENCES_UNLINK_ACCOUNT = "preferences_unlink_account"
 
     TOPS_PREFIX = "tops_"
+
+    @staticmethod
+    def encode_callback_data(action: str, user_id: int) -> str:
+        """Encode callback data with user ID."""
+        return f"{action}:{user_id}"
+
+    @staticmethod
+    def decode_callback_data(data: str) -> tuple[str, int | None]:
+        """Decode callback data to extract action and user ID."""
+        if ":" in data:
+            parts = data.rsplit(":", 1)
+            try:
+                return parts[0], int(parts[1])
+            except (ValueError, IndexError):
+                return data, None
+        return data, None
 
     def __init__(self, lastfm_service: LastfmService):
         self.lastfm_service = lastfm_service
@@ -136,12 +152,12 @@ class ViewService:
         return emojize(response)
 
     async def build_np_response(
-        self, telegram_user: telegram.User, show_cover: bool = False
+        self, telegram_user_id: int, show_cover: bool = False
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
-        user, track = self.lastfm_service.get_now_playing(telegram_user.id)
+        user, track = self.lastfm_service.get_now_playing(telegram_user_id)
         if not user:
             logging.warning(
-                f"User {telegram_user.username} ({telegram_user.id}) not found in the database"
+                f"User with telegram_id {telegram_user_id} not found in the database"
             )
             response = responses.user_not_found.substitute()
             return emojize(response), None, None
@@ -162,7 +178,10 @@ class ViewService:
         keyboard = [
             [
                 telegram.InlineKeyboardButton(
-                    "More info", callback_data=self.NOW_PLAYING_MORE_INFO
+                    "More info",
+                    callback_data=self.encode_callback_data(
+                        self.NOW_PLAYING_MORE_INFO, telegram_user_id
+                    ),
                 )
             ]
         ]
@@ -170,7 +189,10 @@ class ViewService:
             keyboard[0].insert(
                 0,
                 telegram.InlineKeyboardButton(
-                    "🖼️", callback_data=self.NOW_PLAYING_LESS_INFO_SHOW_COVER
+                    "🖼️",
+                    callback_data=self.encode_callback_data(
+                        self.NOW_PLAYING_LESS_INFO_SHOW_COVER, telegram_user_id
+                    ),
                 ),
             )
 
@@ -203,10 +225,11 @@ class ViewService:
         return emojize(response)
 
     async def build_status_response(
-        self, telegram_user: telegram.User, show_cover: bool = False
+        self, telegram_user_id: int, show_cover: bool = False
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
-        recent_tracks = self.lastfm_service.get_recent_tracks(telegram_user.id)
-        if not recent_tracks:
+        recent_tracks = self.lastfm_service.get_recent_tracks(telegram_user_id)
+        user = db.get_user(telegram_user_id)
+        if not recent_tracks or not user:
             response = responses.user_not_found.substitute()
             return emojize(response), None, None
 
@@ -230,16 +253,19 @@ class ViewService:
                 f"\n"
             )
         response = responses.recent_tracks.substitute(
-            telegram_user_first_name=telegram_user.first_name,
+            telegram_user_first_name=user.telegram_username or user.lastfm_username,
             recent_tracks_list=recent_tracks_template_list,
         )
         keyboard = [
             [
                 telegram.InlineKeyboardButton(
                     "Less info",
-                    callback_data=self.NOW_PLAYING_LESS_INFO
-                    if not show_cover
-                    else self.NOW_PLAYING_LESS_INFO_SHOW_COVER,
+                    callback_data=self.encode_callback_data(
+                        self.NOW_PLAYING_LESS_INFO
+                        if not show_cover
+                        else self.NOW_PLAYING_LESS_INFO_SHOW_COVER,
+                        telegram_user_id,
+                    ),
                 )
             ]
         ]
@@ -248,7 +274,10 @@ class ViewService:
                 0,
                 [
                     telegram.InlineKeyboardButton(
-                        "🖼️", callback_data=self.NOW_PLAYING_MORE_INFO
+                        "🖼️",
+                        callback_data=self.encode_callback_data(
+                            self.NOW_PLAYING_MORE_INFO, telegram_user_id
+                        ),
                     )
                 ],
             )
@@ -276,15 +305,24 @@ class ViewService:
                 [
                     InlineKeyboardButton(
                         "👤 Artist",
-                        callback_data=f"{self.TOPS_PREFIX}{lastfm.EntityType.ARTIST}",
+                        callback_data=self.encode_callback_data(
+                            f"{self.TOPS_PREFIX}{lastfm.EntityType.ARTIST}",
+                            telegram_user_id,
+                        ),
                     ),
                     InlineKeyboardButton(
                         "💿 Album",
-                        callback_data=f"{self.TOPS_PREFIX}{lastfm.EntityType.ALBUM}",
+                        callback_data=self.encode_callback_data(
+                            f"{self.TOPS_PREFIX}{lastfm.EntityType.ALBUM}",
+                            telegram_user_id,
+                        ),
                     ),
                     InlineKeyboardButton(
                         "🎵 Track",
-                        callback_data=f"{self.TOPS_PREFIX}{lastfm.EntityType.TRACK}",
+                        callback_data=self.encode_callback_data(
+                            f"{self.TOPS_PREFIX}{lastfm.EntityType.TRACK}",
+                            telegram_user_id,
+                        ),
                     ),
                 ]
             ]
@@ -294,7 +332,6 @@ class ViewService:
             ), reply_markup
 
         if not period:
-            # Map periods to user-friendly names
             period_map = {
                 lastfm.Period.WEEK: "1week",
                 lastfm.Period.ONE_MONTH: "1month",
@@ -309,7 +346,11 @@ class ViewService:
             for p, name in period_map.items():
                 row.append(
                     InlineKeyboardButton(
-                        name, callback_data=f"{self.TOPS_PREFIX}{entity_type}_{p}"
+                        name,
+                        callback_data=self.encode_callback_data(
+                            f"{self.TOPS_PREFIX}{entity_type}_{p}",
+                            telegram_user_id,
+                        ),
                     )
                 )
                 if len(row) == 3:

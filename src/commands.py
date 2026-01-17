@@ -35,17 +35,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
 
     view_service: ViewService = context.bot_data["view_service"]
+    action, original_user_id = view_service.decode_callback_data(query.data)
 
-    if query.data == view_service.NOW_PLAYING_LESS_INFO:
-        await now_playing(update, context)
-    elif query.data == view_service.NOW_PLAYING_LESS_INFO_SHOW_COVER:
-        await now_playing(update, context, show_cover=True)
-    elif query.data == view_service.NOW_PLAYING_MORE_INFO:
-        await status(update, context, show_cover=True)
-    elif query.data == view_service.PREFERENCES_UNLINK_ACCOUNT:
+    if action == view_service.NOW_PLAYING_LESS_INFO:
+        await now_playing(update, context, original_user_id=original_user_id)
+    elif action == view_service.NOW_PLAYING_LESS_INFO_SHOW_COVER:
+        await now_playing(update, context, show_cover=True, original_user_id=original_user_id)
+    elif action == view_service.NOW_PLAYING_MORE_INFO:
+        await status(update, context, show_cover=True, original_user_id=original_user_id)
+    elif action == view_service.PREFERENCES_UNLINK_ACCOUNT:
         await unlink_account(update, context)
-    elif query.data.startswith(view_service.TOPS_PREFIX):
-        await tops(update, context)
+    elif action.startswith(view_service.TOPS_PREFIX):
+        await tops(update, context, original_user_id=original_user_id)
     else:
         logger.error(f"No button handler found for data: {query.data}")
 
@@ -62,18 +63,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def now_playing(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, show_cover: bool = False
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    show_cover: bool = False,
+    original_user_id: Optional[int] = None,
 ) -> None:
     """Fetches and displays the user's currently playing track."""
     from_button = update.callback_query is not None
     message = update.callback_query.message if from_button else update.message
-    from_user = (
-        update.callback_query.from_user if from_button else update.message.from_user
-    )
+    telegram_user_id = original_user_id if original_user_id else update.message.from_user.id
 
     view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup, cover_url = await view_service.build_np_response(
-        from_user, show_cover
+        telegram_user_id, show_cover
     )
 
     if from_button and show_cover and cover_url:
@@ -114,18 +116,19 @@ async def lastfm_username_set(
 
 
 async def status(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, show_cover: bool = False
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    show_cover: bool = False,
+    original_user_id: Optional[int] = None,
 ) -> None:
     """Fetches and displays the user's recent tracks."""
     from_button = update.callback_query is not None
     message = update.callback_query.message if from_button else update.message
-    from_user = (
-        update.callback_query.from_user if from_button else update.message.from_user
-    )
+    telegram_user_id = original_user_id if original_user_id else update.message.from_user.id
 
     view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup, cover_url = await view_service.build_status_response(
-        from_user, show_cover
+        telegram_user_id, show_cover
     )
 
     if from_button and show_cover:
@@ -145,10 +148,16 @@ async def status(
         )
 
 
-async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def tops(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    original_user_id: Optional[int] = None,
+) -> None:
     """Shows the user's top artists, albums or tracks."""
     entity_type = None
     period = None
+
+    view_service: ViewService = context.bot_data["view_service"]
 
     if update.callback_query:
         logger.info(
@@ -156,10 +165,14 @@ async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"- pressed button: {update.callback_query.data}"
         )
         message = update.callback_query.message
-        from_user = update.callback_query.from_user
         is_callback = True
 
-        data_parts = update.callback_query.data.split("_")
+        action, user_id_from_data = view_service.decode_callback_data(
+            update.callback_query.data
+        )
+        telegram_user_id = user_id_from_data or original_user_id
+
+        data_parts = action.split("_")
         if len(data_parts) > 1:
             entity_type = lastfm.EntityType(data_parts[1])
         if len(data_parts) > 2:
@@ -170,7 +183,7 @@ async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"- issued command: {update.message.text}"
         )
         message = update.message
-        from_user = update.message.from_user
+        telegram_user_id = update.message.from_user.id
         is_callback = False
 
         if context.args:
@@ -203,9 +216,8 @@ async def tops(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             except (IndexError, ValueError):
                 pass
 
-    view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup = await view_service.build_tops_response(
-        from_user.id, entity_type, period
+        telegram_user_id, entity_type, period
     )
 
     if is_callback:
