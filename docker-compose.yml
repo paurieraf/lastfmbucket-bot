@@ -16,7 +16,7 @@ services:
       - "8080"
     volumes:
       - ./data:/app/data
-    command: python admin.py
+    command: python src/admin.py
     environment:
       - ADMIN_PORT=8080
     networks:
