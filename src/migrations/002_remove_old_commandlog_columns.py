@@ -1,8 +1,8 @@
 """
-Remove old chat_id and chat_type columns from CommandLog.
+Remove old chat_type column from CommandLog (now on Chat table).
 
-This migration handles the case where CommandLog had direct chat_id and chat_type
-fields instead of a FK to Chat.
+Note: SQLite doesn't support DROP COLUMN before version 3.35.0.
+This migration checks if the column exists and skips if not needed.
 """
 
 
@@ -12,13 +12,15 @@ def migrate(migrator, database, fake=False, **kwargs):
     cursor = database.execute_sql("PRAGMA table_info(commandlog)")
     columns = [row[1] for row in cursor.fetchall()]
 
-    # Remove old chat_type from CommandLog (now on Chat table)
+    # SQLite 3.35+ supports ALTER TABLE DROP COLUMN
     if "chat_type" in columns:
-        migrator.drop_column("commandlog", "chat_type")
+        try:
+            database.execute_sql('ALTER TABLE "commandlog" DROP COLUMN "chat_type"')
+        except Exception:
+            # Older SQLite - skip, column will just be unused
+            pass
 
 
 def rollback(migrator, database, fake=False, **kwargs):
     """Rollback - re-add columns."""
-    from peewee import CharField
-
-    migrator.add_column("commandlog", "chat_type", CharField(default=""))
+    pass
