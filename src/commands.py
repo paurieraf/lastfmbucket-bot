@@ -4,8 +4,9 @@ Telegram bot command handlers.
 This module contains handlers for commands and callback queries.
 """
 
+import functools
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 import telegram.constants
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ from emoji import emojize
 from telegram import LinkPreviewOptions, Update
 from telegram.ext import ContextTypes
 
+import db
 import lastfm
 from callbacks import Action, Callback
 from services import ViewService
@@ -23,6 +25,32 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+
+def log_command(command_name: str) -> Callable:
+    """Decorator to log command executions to the database."""
+
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(
+            update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
+        ):
+            message = update.message
+            if message and message.from_user:
+                db.log_command(
+                    user_id=message.from_user.id,
+                    username=message.from_user.username or "",
+                    command=command_name,
+                    args=" ".join(context.args) if context.args else "",
+                    chat_id=message.chat_id,
+                    chat_type=message.chat.type,
+                )
+            return await func(update, context, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
 
 # Command constants
 START_COMMAND = "start"
@@ -102,6 +130,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await handler(update, context, cb)
 
 
+@log_command(START_COMMAND)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message to the user."""
     logger.info(
@@ -113,6 +142,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(response)
 
 
+@log_command(NOW_PLAYING_COMMAND)
 async def now_playing(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -155,6 +185,7 @@ async def now_playing(
         )
 
 
+@log_command(SET_COMMAND)
 async def lastfm_username_set(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -175,6 +206,7 @@ async def lastfm_username_set(
     await update.message.reply_text(response)
 
 
+@log_command(STATUS_COMMAND)
 async def status(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -208,6 +240,7 @@ async def status(
         )
 
 
+@log_command(TOPS_COMMAND)
 async def tops(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -295,6 +328,7 @@ def _parse_tops_args(
     return entity_type, period
 
 
+@log_command(PREFERENCES_COMMAND)
 async def preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays user preferences options."""
     logger.info(
@@ -321,6 +355,7 @@ async def unlink_account(
     await query.edit_message_text(text=response)
 
 
+@log_command(HELP_COMMAND)
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shows the bot's description as help text."""
     logger.info(
@@ -331,6 +366,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(emojize(bot_description))
 
 
+@log_command(CHANGELOG_COMMAND)
 async def changelog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays the changelog."""
     logger.info(
@@ -342,6 +378,7 @@ async def changelog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(response)
 
 
+@log_command(PRIVACY_COMMAND)
 async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays the privacy policy."""
     logger.info(
@@ -353,6 +390,7 @@ async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(message)
 
 
+@log_command(COMPARE_COMMAND)
 async def compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Compares listening stats between the user and another Last.fm user."""
     logger.info(

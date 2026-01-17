@@ -47,7 +47,20 @@ class Chat(Model):
         database = db
 
 
-MODELS = [User, Chat]
+class CommandLog(Model):
+    user_id = BigIntegerField()
+    username = CharField(default="")
+    command = CharField()
+    args = CharField(default="")
+    chat_id = BigIntegerField()
+    chat_type = CharField(default="")  # private, group, supergroup, channel
+    timestamp = BigIntegerField()  # Unix timestamp
+
+    class Meta:
+        database = db
+
+
+MODELS = [User, Chat, CommandLog]
 
 """
 DB Connection
@@ -126,6 +139,30 @@ def delete_user(telegram_user_id: int) -> None:
         if user:
             user.delete_instance()
             logging.info(f"User with telegram_id {telegram_user_id} deleted.")
+
+
+def log_command(
+    user_id: int,
+    username: str,
+    command: str,
+    args: str,
+    chat_id: int,
+    chat_type: str,
+) -> CommandLog:
+    """Logs a command execution to the database."""
+    import time
+
+    with db.atomic():
+        log_entry = CommandLog.create(
+            user_id=user_id,
+            username=username,
+            command=command,
+            args=args,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            timestamp=int(time.time()),
+        )
+    return log_entry
 
 
 def create_or_update_chat(telegram_chat_id: int, telegram_chat_name: str) -> Chat:
