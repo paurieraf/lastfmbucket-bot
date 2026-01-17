@@ -15,6 +15,7 @@ from telegram import InlineKeyboardButton
 import db
 import lastfm
 import responses
+from callbacks import Action, Callback, Entity, Period as CallbackPeriod, entity_from_lastfm, period_from_lastfm
 from lastfm import EntityType, LastfmClient, Period
 
 logging.basicConfig(
@@ -107,31 +108,7 @@ class LastfmService:
 
 
 class ViewService:
-    """Returns a formatted response string for every command"""
-
-    NOW_PLAYING_LESS_INFO = "np_less"
-    NOW_PLAYING_LESS_INFO_SHOW_COVER = "np_less_cover"
-    NOW_PLAYING_MORE_INFO = "np_more"
-    NOW_PLAYING_REFRESH = "np_refresh"
-    PREFERENCES_UNLINK_ACCOUNT = "preferences_unlink_account"
-
-    TOPS_PREFIX = "tops_"
-
-    @staticmethod
-    def encode_callback_data(action: str, user_id: int) -> str:
-        """Encode callback data with user ID."""
-        return f"{action}:{user_id}"
-
-    @staticmethod
-    def decode_callback_data(data: str) -> tuple[str, int | None]:
-        """Decode callback data to extract action and user ID."""
-        if ":" in data:
-            parts = data.rsplit(":", 1)
-            try:
-                return parts[0], int(parts[1])
-            except (ValueError, IndexError):
-                return data, None
-        return data, None
+    """Builds formatted responses and keyboards for bot commands."""
 
     def __init__(self, lastfm_service: LastfmService):
         self.lastfm_service = lastfm_service
@@ -179,9 +156,7 @@ class ViewService:
             [
                 telegram.InlineKeyboardButton(
                     "More info",
-                    callback_data=self.encode_callback_data(
-                        self.NOW_PLAYING_MORE_INFO, telegram_user_id
-                    ),
+                    callback_data=Callback(Action.NP_MORE, telegram_user_id).encode(),
                 )
             ]
         ]
@@ -190,9 +165,7 @@ class ViewService:
                 0,
                 telegram.InlineKeyboardButton(
                     "🖼️",
-                    callback_data=self.encode_callback_data(
-                        self.NOW_PLAYING_LESS_INFO_SHOW_COVER, telegram_user_id
-                    ),
+                    callback_data=Callback(Action.NP_LESS_COVER, telegram_user_id).encode(),
                 ),
             )
 
@@ -256,16 +229,12 @@ class ViewService:
             telegram_user_first_name=user.telegram_username or user.lastfm_username,
             recent_tracks_list=recent_tracks_template_list,
         )
+        less_info_action = Action.NP_LESS if not show_cover else Action.NP_LESS_COVER
         keyboard = [
             [
                 telegram.InlineKeyboardButton(
                     "Less info",
-                    callback_data=self.encode_callback_data(
-                        self.NOW_PLAYING_LESS_INFO
-                        if not show_cover
-                        else self.NOW_PLAYING_LESS_INFO_SHOW_COVER,
-                        telegram_user_id,
-                    ),
+                    callback_data=Callback(less_info_action, telegram_user_id).encode(),
                 )
             ]
         ]
@@ -275,9 +244,7 @@ class ViewService:
                 [
                     telegram.InlineKeyboardButton(
                         "🖼️",
-                        callback_data=self.encode_callback_data(
-                            self.NOW_PLAYING_MORE_INFO, telegram_user_id
-                        ),
+                        callback_data=Callback(Action.NP_MORE, telegram_user_id).encode(),
                     )
                 ],
             )
@@ -299,30 +266,27 @@ class ViewService:
         telegram_user_id: int,
         entity_type: Optional[lastfm.EntityType] = None,
         period: Optional[lastfm.Period] = None,
-    ) -> tuple[str, telegram.InlineKeyboardMarkup]:
+    ) -> tuple[str, telegram.InlineKeyboardMarkup | None]:
         if not entity_type:
             keyboard = [
                 [
                     InlineKeyboardButton(
                         "👤 Artist",
-                        callback_data=self.encode_callback_data(
-                            f"{self.TOPS_PREFIX}{lastfm.EntityType.ARTIST}",
-                            telegram_user_id,
-                        ),
+                        callback_data=Callback(
+                            Action.TOPS, telegram_user_id, entity=Entity.ARTIST
+                        ).encode(),
                     ),
                     InlineKeyboardButton(
                         "💿 Album",
-                        callback_data=self.encode_callback_data(
-                            f"{self.TOPS_PREFIX}{lastfm.EntityType.ALBUM}",
-                            telegram_user_id,
-                        ),
+                        callback_data=Callback(
+                            Action.TOPS, telegram_user_id, entity=Entity.ALBUM
+                        ).encode(),
                     ),
                     InlineKeyboardButton(
                         "🎵 Track",
-                        callback_data=self.encode_callback_data(
-                            f"{self.TOPS_PREFIX}{lastfm.EntityType.TRACK}",
-                            telegram_user_id,
-                        ),
+                        callback_data=Callback(
+                            Action.TOPS, telegram_user_id, entity=Entity.TRACK
+                        ).encode(),
                     ),
                 ]
             ]
@@ -332,25 +296,25 @@ class ViewService:
             ), reply_markup
 
         if not period:
-            period_map = {
-                lastfm.Period.WEEK: "1week",
-                lastfm.Period.ONE_MONTH: "1month",
-                lastfm.Period.THREE_MONTHS: "3month",
-                lastfm.Period.SIX_MONTHS: "6month",
-                lastfm.Period.YEAR: "1year",
-                lastfm.Period.OVERALL: "alltime",
+            period_display = {
+                CallbackPeriod.WEEK: "1week",
+                CallbackPeriod.MONTH_1: "1month",
+                CallbackPeriod.MONTH_3: "3month",
+                CallbackPeriod.MONTH_6: "6month",
+                CallbackPeriod.YEAR: "1year",
+                CallbackPeriod.OVERALL: "alltime",
             }
+            cb_entity = entity_from_lastfm(entity_type)
 
             keyboard = []
             row = []
-            for p, name in period_map.items():
+            for cb_period, name in period_display.items():
                 row.append(
                     InlineKeyboardButton(
                         name,
-                        callback_data=self.encode_callback_data(
-                            f"{self.TOPS_PREFIX}{entity_type}_{p}",
-                            telegram_user_id,
-                        ),
+                        callback_data=Callback(
+                            Action.TOPS, telegram_user_id, entity=cb_entity, period=cb_period
+                        ).encode(),
                     )
                 )
                 if len(row) == 3:
@@ -407,13 +371,14 @@ class ViewService:
         return responses.privacy.substitute()
 
     async def build_preferences_response(
-        self,
+        self, telegram_user_id: int
     ) -> tuple[str, telegram.InlineKeyboardMarkup]:
         """Builds the preferences response."""
         keyboard = [
             [
                 telegram.InlineKeyboardButton(
-                    "Unlink your account", callback_data=self.PREFERENCES_UNLINK_ACCOUNT
+                    "Unlink your account",
+                    callback_data=Callback(Action.PREF_UNLINK, telegram_user_id).encode(),
                 )
             ]
         ]

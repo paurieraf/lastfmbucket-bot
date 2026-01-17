@@ -1,3 +1,9 @@
+"""
+Telegram bot command handlers.
+
+This module contains handlers for commands and callback queries.
+"""
+
 import logging
 from typing import Optional
 
@@ -8,6 +14,7 @@ from telegram import LinkPreviewOptions, Update
 from telegram.ext import ContextTypes
 
 import lastfm
+from callbacks import Action, Callback
 from services import ViewService
 
 logging.basicConfig(
@@ -29,26 +36,69 @@ SET_COMMAND = "set"
 PRIVACY_COMMAND = "privacy"
 
 
+async def _handle_np_less(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    await now_playing(update, context, telegram_user_id=cb.owner_id)
+
+
+async def _handle_np_less_cover(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    await now_playing(update, context, show_cover=True, telegram_user_id=cb.owner_id)
+
+
+async def _handle_np_more(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    await status(update, context, show_cover=True, telegram_user_id=cb.owner_id)
+
+
+async def _handle_pref_unlink(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    await unlink_account(update, context, telegram_user_id=cb.owner_id)
+
+
+async def _handle_tops(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    entity_type = cb.to_lastfm_entity()
+    period = cb.to_lastfm_period()
+    await tops(
+        update,
+        context,
+        telegram_user_id=cb.owner_id,
+        entity_type=entity_type,
+        period=period,
+    )
+
+
+CALLBACK_ROUTES = {
+    Action.NP_LESS: _handle_np_less,
+    Action.NP_LESS_COVER: _handle_np_less_cover,
+    Action.NP_MORE: _handle_np_more,
+    Action.PREF_UNLINK: _handle_pref_unlink,
+    Action.TOPS: _handle_tops,
+}
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Parses the CallbackQuery and updates the message text."""
+    """Route callback queries to appropriate handlers using typed Callback data."""
     query = update.callback_query
     await query.answer()
 
-    view_service: ViewService = context.bot_data["view_service"]
-    action, original_user_id = view_service.decode_callback_data(query.data)
+    cb = Callback.decode(query.data or "")
+    if not cb:
+        logger.error(f"Invalid callback data: {query.data}")
+        return
 
-    if action == view_service.NOW_PLAYING_LESS_INFO:
-        await now_playing(update, context, original_user_id=original_user_id)
-    elif action == view_service.NOW_PLAYING_LESS_INFO_SHOW_COVER:
-        await now_playing(update, context, show_cover=True, original_user_id=original_user_id)
-    elif action == view_service.NOW_PLAYING_MORE_INFO:
-        await status(update, context, show_cover=True, original_user_id=original_user_id)
-    elif action == view_service.PREFERENCES_UNLINK_ACCOUNT:
-        await unlink_account(update, context)
-    elif action.startswith(view_service.TOPS_PREFIX):
-        await tops(update, context, original_user_id=original_user_id)
-    else:
-        logger.error(f"No button handler found for data: {query.data}")
+    handler = CALLBACK_ROUTES.get(cb.action)
+    if not handler:
+        logger.error(f"No handler for action: {cb.action} (data: {query.data})")
+        return
+
+    await handler(update, context, cb)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -66,16 +116,16 @@ async def now_playing(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     show_cover: bool = False,
-    original_user_id: Optional[int] = None,
+    telegram_user_id: Optional[int] = None,
 ) -> None:
     """Fetches and displays the user's currently playing track."""
     from_button = update.callback_query is not None
     message = update.callback_query.message if from_button else update.message
-    telegram_user_id = original_user_id if original_user_id else update.message.from_user.id
+    user_id = telegram_user_id or update.message.from_user.id
 
     view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup, cover_url = await view_service.build_np_response(
-        telegram_user_id, show_cover
+        user_id, show_cover
     )
 
     if from_button and show_cover and cover_url:
@@ -119,16 +169,16 @@ async def status(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     show_cover: bool = False,
-    original_user_id: Optional[int] = None,
+    telegram_user_id: Optional[int] = None,
 ) -> None:
     """Fetches and displays the user's recent tracks."""
     from_button = update.callback_query is not None
     message = update.callback_query.message if from_button else update.message
-    telegram_user_id = original_user_id if original_user_id else update.message.from_user.id
+    user_id = telegram_user_id or update.message.from_user.id
 
     view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup, cover_url = await view_service.build_status_response(
-        telegram_user_id, show_cover
+        user_id, show_cover
     )
 
     if from_button and show_cover:
@@ -151,76 +201,37 @@ async def status(
 async def tops(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
-    original_user_id: Optional[int] = None,
+    telegram_user_id: Optional[int] = None,
+    entity_type: Optional[lastfm.EntityType] = None,
+    period: Optional[lastfm.Period] = None,
 ) -> None:
     """Shows the user's top artists, albums or tracks."""
-    entity_type = None
-    period = None
+    from_button = update.callback_query is not None
 
-    view_service: ViewService = context.bot_data["view_service"]
-
-    if update.callback_query:
+    if from_button:
         logger.info(
             f"username: {update.callback_query.from_user.username} "
             f"- pressed button: {update.callback_query.data}"
         )
         message = update.callback_query.message
-        is_callback = True
-
-        action, user_id_from_data = view_service.decode_callback_data(
-            update.callback_query.data
-        )
-        telegram_user_id = user_id_from_data or original_user_id
-
-        data_parts = action.split("_")
-        if len(data_parts) > 1:
-            entity_type = lastfm.EntityType(data_parts[1])
-        if len(data_parts) > 2:
-            period = lastfm.Period(data_parts[2])
+        user_id = telegram_user_id
     else:
         logger.info(
             f"username: {update.message.from_user.username} "
             f"- issued command: {update.message.text}"
         )
         message = update.message
-        telegram_user_id = update.message.from_user.id
-        is_callback = False
+        user_id = update.message.from_user.id
 
         if context.args:
-            try:
-                arg0 = context.args[0].lower()
-                if arg0 in ["artists", "artist"]:
-                    entity_type = lastfm.EntityType.ARTIST
-                elif arg0 in ["albums", "album"]:
-                    entity_type = lastfm.EntityType.ALBUM
-                elif arg0 in ["tracks", "track"]:
-                    entity_type = lastfm.EntityType.TRACK
-            except (IndexError, ValueError):
-                pass
+            entity_type, period = _parse_tops_args(context.args)
 
-        if len(context.args) > 1:
-            try:
-                arg1 = context.args[1].lower()
-                if arg1 in ["1week", "week"]:
-                    period = lastfm.Period.WEEK
-                elif arg1 in ["1month", "month"]:
-                    period = lastfm.Period.ONE_MONTH
-                elif arg1 in ["3months", "3month"]:
-                    period = lastfm.Period.THREE_MONTHS
-                elif arg1 in ["6months", "6month"]:
-                    period = lastfm.Period.SIX_MONTHS
-                elif arg1 in ["12months", "12month", "year"]:
-                    period = lastfm.Period.YEAR
-                elif arg1 in ["overall", "alltime"]:
-                    period = lastfm.Period.OVERALL
-            except (IndexError, ValueError):
-                pass
-
+    view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup = await view_service.build_tops_response(
-        telegram_user_id, entity_type, period
+        user_id, entity_type, period
     )
 
-    if is_callback:
+    if from_button:
         await message.edit_text(
             response,
             reply_markup=reply_markup,
@@ -235,6 +246,45 @@ async def tops(
         )
 
 
+def _parse_tops_args(
+    args: list[str],
+) -> tuple[Optional[lastfm.EntityType], Optional[lastfm.Period]]:
+    """Parse command arguments for tops command."""
+    entity_type = None
+    period = None
+
+    if args:
+        entity_map = {
+            "artists": lastfm.EntityType.ARTIST,
+            "artist": lastfm.EntityType.ARTIST,
+            "albums": lastfm.EntityType.ALBUM,
+            "album": lastfm.EntityType.ALBUM,
+            "tracks": lastfm.EntityType.TRACK,
+            "track": lastfm.EntityType.TRACK,
+        }
+        entity_type = entity_map.get(args[0].lower())
+
+    if len(args) > 1:
+        period_map = {
+            "1week": lastfm.Period.WEEK,
+            "week": lastfm.Period.WEEK,
+            "1month": lastfm.Period.ONE_MONTH,
+            "month": lastfm.Period.ONE_MONTH,
+            "3months": lastfm.Period.THREE_MONTHS,
+            "3month": lastfm.Period.THREE_MONTHS,
+            "6months": lastfm.Period.SIX_MONTHS,
+            "6month": lastfm.Period.SIX_MONTHS,
+            "12months": lastfm.Period.YEAR,
+            "12month": lastfm.Period.YEAR,
+            "year": lastfm.Period.YEAR,
+            "overall": lastfm.Period.OVERALL,
+            "alltime": lastfm.Period.OVERALL,
+        }
+        period = period_map.get(args[1].lower())
+
+    return entity_type, period
+
+
 async def preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays user preferences options."""
     logger.info(
@@ -242,17 +292,22 @@ async def preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"- issued command: {update.message.text}"
     )
     view_service: ViewService = context.bot_data["view_service"]
-    response, reply_markup = await view_service.build_preferences_response()
+    response, reply_markup = await view_service.build_preferences_response(
+        update.message.from_user.id
+    )
     await update.message.reply_html(response, reply_markup=reply_markup)
 
 
-async def unlink_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def unlink_account(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    telegram_user_id: Optional[int] = None,
+) -> None:
     """Unlinks a user's Last.fm account."""
     query = update.callback_query
+    user_id = telegram_user_id or query.from_user.id
     view_service: ViewService = context.bot_data["view_service"]
-    response = view_service.build_preferences_unlink_account_response(
-        query.from_user.id
-    )
+    response = view_service.build_preferences_unlink_account_response(user_id)
     await query.edit_message_text(text=response)
 
 
@@ -266,7 +321,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(emojize(bot_description))
 
 
-async def changelog(update: Update, context: ContextTypes.DEFAULT_TPE) -> None:
+async def changelog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """TODO: Implement changelog command."""
     logger.info(
         f"username: {update.message.from_user.username} "
