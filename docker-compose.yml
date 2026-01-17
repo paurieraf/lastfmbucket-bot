@@ -5,7 +5,4 @@ services:
     env_file: .env
     restart: unless-stopped
     volumes:
-      - lastfmbucket-bot-data:/app/data
-
-volumes:
-  lastfmbucket-bot-data:
+      - ./data:/app/data
