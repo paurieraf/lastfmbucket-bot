@@ -138,7 +138,39 @@ You can also skip the menus with a direct command:
 
 ---
 
-### 3.4 User Comparison — `/compare <lastfm_username>`
+### 3.4 Visual Collage Generation — `/collage`
+
+Generates high-resolution composite image cards of your top albums, artists, or tracks:
+
+- **Configurable Dimensions:** Supports arbitrary NxM grids from 1x1 up to **20x20** (maximum 400 tiles).
+- **Dynamic Resolution Scaling:** Automatically scales tile resolutions (300px, 150px, 100px) and font typography proportionally for crystal-clear visual quality without excessive memory usage.
+- **Custom Tile Sizing:** Optionally specify explicit tile sizes (e.g. `150px`, `ts:200`) between 50px and 600px.
+- **Interactive Multi-Tier Builder or CLI Shortcuts:**
+  ```
+  /collage                         # Launches interactive 3-step button builder
+  /collage 3x3 week album          # Direct 3x3 weekly album collage
+  /collage 10x10 overall artist    # Massive 100-artist all-time collage
+  /collage 5x5 1month track 150px  # 25-track monthly collage with custom 150px tiles
+  ```
+
+```mermaid
+flowchart LR
+    A["/collage command"] --> B{"Select entity"}
+    B --> C["👤 Artist"]
+    B --> D["💿 Album"]
+    B --> E["🎵 Track"]
+    C --> F{"Select grid size"}
+    D --> F
+    E --> F
+    F --> G["3x3, 4x4, 5x5..."]
+    F --> H{"Select period"}
+    G --> H
+    H --> I["🎨 Generated Collage Photo"]
+```
+
+---
+
+### 3.5 User Comparison — `/compare <lastfm_username>`
 
 Compare your listening stats head-to-head with any Last.fm user:
 

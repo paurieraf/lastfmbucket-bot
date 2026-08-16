@@ -62,40 +62,42 @@ graph TB
 The bot engine is located in `src/bot.py`, `src/commands.py`, `src/callbacks.py`, `src/services.py`, and `src/responses.py`.
 
 #### 1. Lifecycle & Dispatching
-- **Framework:** `python-telegram-bot` v22.5 running in polling mode (`ApplicationBuilder().token(...).build()`, `app.run_polling()`).
+- **Framework:** `python-telegram-bot` v22.8 running in polling mode (`ApplicationBuilder().token(...).build()`, `app.run_polling()`).
 - **Telemetry:** Initialized with Sentry SDK (`sentry_sdk.init(dsn=config.SENTRY_DSN, send_default_pii=True)`).
-- **Dependency Injection:** `LastfmService` and `ViewService` instances are attached to `app.bot_data` during startup and accessed inside handler routines via `context.bot_data["view_service"]`.
+- **Dependency Injection:** `LastfmService`, `ViewService`, and `CollageService` instances are attached to `app.bot_data` during startup and accessed inside handler routines via `context.bot_data["view_service"]` and `context.bot_data["collage_service"]`.
 - **Command Logging Middleware:** Commands are decorated with `@log_command(command_name)`. It records caller `user_id`, `username`, arguments `context.args`, and chat context (`chat_id`, `chat_type`, `chat_name`) to SQLite via `db.log_command()`.
 
-#### 2. Complete Command Matrix (13 Commands)
+#### 2. Complete Command Matrix (14 Commands)
 
 | # | Command | Handler Function | Purpose & Execution Flow | Output Format |
 |---|---|---|---|---|
-| 1 | `/start` | `start` (`commands.py:139`) | Welcomes user; checks if user is linked in SQLite; prompts `/set` if missing. | Plain text (`string.Template`) |
-| 2 | `/set` | `lastfm_username_set` (`commands.py:194`) | Links caller's Telegram ID to Last.fm username via `LastfmService.set_lastfm_username`. | HTML confirmation / error |
-| 3 | `/np` | `now_playing` (`commands.py:151`) | Queries currently playing track; generates view with `More info` and `🖼️ Cover` buttons. | HTML + Inline Keyboard |
-| 4 | `/status` | `status` (`commands.py:216`) | Shows recent 5 tracks with relative timestamps (`humanize`); includes `Less info` and `🖼️ Cover` buttons. | HTML + Inline Keyboard |
-| 5 | `/tops` | `tops` (`commands.py:249`) | Multi-tier interactive top charts (Artist/Album/Track over 7d/1m/3m/6m/1y/overall) or direct args parser (`_parse_tops_args`). | HTML List (Top 10) or 2-Tier Keyboard |
-| 6 | `/compare` | `compare` (`commands.py:399`) | Compares listening stats, scrobble count, top artists, and common artists between caller and target. | HTML summary table |
-| 7 | `/preferences` | `preferences` (`commands.py:337`) | Displays user settings and account management inline actions. | HTML + `Unlink account` Button |
-| 8 | `/help` | `help_command` (`commands.py:364`) | Fetches bot description dynamically from Telegram Bot API via `context.bot.get_my_description()`. | Plain text with emoji conversion |
-| 9 | `/changelog` | `changelog` (`commands.py:375`) | Reads `CHANGELOG.md` file (truncated to 4000 characters). | HTML `<pre>` code block |
-| 10 | `/privacy` | `privacy` (`commands.py:387`) | Displays GDPR and data privacy policy. | HTML formatted text |
-| 11 | `/vibe` | `vibe` (`commands.py:420`) | Analyzes last 10 scrobbles + current track using Ollama (`generate_vibe`). | Markdown AI response |
-| 12 | `/roast` | `roast` (`commands.py:451`) | Generates humorous critique of user's overall top 10 artists and top 5 tracks via Ollama (`generate_roast`). | Markdown AI response |
-| 13 | `/recommend` | `recommend` (`commands.py:487`) | Generates 5 lesser-known artist recommendations from top 10 artists via Ollama (`generate_recommendations`). | Markdown AI response |
+| 1 | `/start` | `start` (`commands.py:235`) | Welcomes user; checks if user is linked in SQLite; prompts `/set` if missing. | Plain text (`string.Template`) |
+| 2 | `/set` | `lastfm_username_set` (`commands.py:285`) | Links caller's Telegram ID to Last.fm username via `LastfmService.set_lastfm_username`. | HTML confirmation / error |
+| 3 | `/np` | `now_playing` (`commands.py:249`) | Queries currently playing track; generates view with `More info` and `🖼️ Cover` buttons. | HTML + Inline Keyboard |
+| 4 | `/status` | `status` (`commands.py:310`) | Shows recent 5 tracks with relative timestamps (`humanize`); includes `Less info` and `🖼️ Cover` buttons. | HTML + Inline Keyboard |
+| 5 | `/tops` | `tops` (`commands.py:342`) | Multi-tier interactive top charts (Artist/Album/Track over 7d/1m/3m/6m/1y/overall) or direct args parser (`_parse_tops_args`). | HTML List (Top 10) or 2-Tier Keyboard |
+| 6 | `/collage` | `collage` (`commands.py:426`) | Generates composite collage photo (1x1 to 20x20, max 400 tiles, dynamic resolution, optional `tile_size`) using `lastfmcollagegenerator`. | Photo with HTML caption or 3-Tier Keyboard |
+| 7 | `/compare` | `compare` (`commands.py:580`) | Compares listening stats, scrobble count, top artists, and common artists between caller and target. | HTML summary table |
+| 8 | `/preferences` | `preferences` (`commands.py:501`) | Displays user settings and account management inline actions. | HTML + `Unlink account` Button |
+| 9 | `/help` | `help_command` (`commands.py:533`) | Fetches bot description dynamically from Telegram Bot API via `context.bot.get_my_description()`. | Plain text with emoji conversion |
+| 10 | `/changelog` | `changelog` (`commands.py:548`) | Reads `CHANGELOG.md` file (truncated to 4000 characters). | HTML `<pre>` code block |
+| 11 | `/privacy` | `privacy` (`commands.py:564`) | Displays GDPR and data privacy policy. | HTML formatted text |
+| 12 | `/vibe` | `vibe` (`commands.py:603`) | Analyzes last 10 scrobbles + current track using Ollama (`generate_vibe`). | Markdown AI response |
+| 13 | `/roast` | `roast` (`commands.py:654`) | Generates humorous critique of user's overall top 10 artists and top 5 tracks via Ollama (`generate_roast`). | Markdown AI response |
+| 14 | `/recommend` | `recommend` (`commands.py:711`) | Generates 5 lesser-known artist recommendations from top 10 artists via Ollama (`generate_recommendations`). | Markdown AI response |
 
 #### 3. Compact Callback Query Protocol (`src/callbacks.py`)
-Telegram enforces a strict **64-byte payload limit** on `InlineKeyboardButton.callback_data`. `src/callbacks.py` implements a versioned, delimited protocol that packs state and owner identity into ~20 bytes:
+Telegram enforces a strict **64-byte payload limit** on `InlineKeyboardButton.callback_data`. `src/callbacks.py` implements a versioned, delimited protocol that packs state and owner identity into ~20-30 bytes:
 
-$$\text{Callback Wire Format: } \texttt{v|action|owner\_id|entity|period}$$
+$$\text{Callback Wire Format: } \texttt{v|action|owner\_id|entity|period|size}$$
 
 - **Components:**
   - `v`: Protocol version (`"1"`).
-  - `action`: Short action identifier from `Action` enum (`nl`, `nc`, `nm`, `pu`, `t`).
+  - `action`: Short action identifier from `Action` enum (`nl`, `nc`, `nm`, `pu`, `t`, `cl`).
   - `owner_id`: Target Telegram user ID (`int`). **Critical**: In group chats, buttons retain the identity of the user who initiated the query, preventing group members from hijacking or mutating each other's views.
   - `entity`: Optional short code from `Entity` enum (`a` = Artist, `b` = Album, `t` = Track).
   - `period`: Optional short code from `Period` enum (`w` = 7 days, `1` = 1 month, `3` = 3 months, `6` = 6 months, `y` = 1 year, `o` = Overall).
+  - `size`: Optional size string (e.g. `3x3`, `5x5`, `10x10`).
 
 - **Action Enum & Routing Table:**
 
@@ -106,6 +108,7 @@ $$\text{Callback Wire Format: } \texttt{v|action|owner\_id|entity|period}$$
 | `Action.NP_MORE` | `nm` | `_handle_np_more` | Expands Now Playing view into full 5-track status list with cover art. |
 | `Action.PREF_UNLINK` | `pu` | `_handle_pref_unlink` | Deletes user mapping from SQLite and confirms unlinking. |
 | `Action.TOPS` | `t` | `_handle_tops` | Navigates the tops decision tree (Entity Selection $\to$ Period Selection $\to$ Top 10 Display). |
+| `Action.COLLAGE` | `cl` | `_handle_collage` | Navigates the interactive collage builder (Entity $\to$ Size $\to$ Period $\to$ Image Generation). |
 
 ---
 

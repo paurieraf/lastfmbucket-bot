@@ -537,7 +537,7 @@ class ViewService:
             ), reply_markup
 
         if not size:
-            sizes = ["3x3", "4x4", "5x5", "3x5"]
+            presets = [["3x3", "4x4", "5x5"], ["3x5", "10x5", "10x10"]]
             keyboard = [
                 [
                     InlineKeyboardButton(
@@ -546,17 +546,9 @@ class ViewService:
                             Action.COLLAGE, telegram_user_id, entity=entity, size=s
                         ).encode(),
                     )
-                    for s in sizes[:2]
-                ],
-                [
-                    InlineKeyboardButton(
-                        s,
-                        callback_data=Callback(
-                            Action.COLLAGE, telegram_user_id, entity=entity, size=s
-                        ).encode(),
-                    )
-                    for s in sizes[2:]
-                ],
+                    for s in row
+                ]
+                for row in presets
             ]
             entity_name = entity.name.lower()
             reply_markup = telegram.InlineKeyboardMarkup(keyboard)
@@ -611,15 +603,18 @@ class ViewService:
         return "", None
 
 
-def parse_collage_args(args: list[str]) -> tuple[str, int, int, str]:
+def parse_collage_args(
+    args: list[str],
+) -> tuple[str, int, int, str, Optional[int]]:
     """
     Parses CLI arguments for collage command.
-    Returns (entity, cols, rows, period).
+    Returns (entity, cols, rows, period, tile_size).
     """
     entity = "album"
     cols = 3
     rows = 3
     period = "7day"
+    tile_size: Optional[int] = None
 
     entity_aliases = {
         "album": "album",
@@ -663,6 +658,10 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str]:
 
     dim_pattern = re.compile(r"^(\d+)x(\d+)$", re.IGNORECASE)
     single_dim_pattern = re.compile(r"^(\d+)$")
+    tile_size_pattern = re.compile(
+        r"^(?:ts|tile|tilesize|tile_size|size)[:=](\d+)$", re.IGNORECASE
+    )
+    tile_size_px_pattern = re.compile(r"^(\d+)\s*px$", re.IGNORECASE)
 
     for arg in args:
         clean = arg.strip().lower()
@@ -672,24 +671,46 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str]:
             entity = entity_aliases[clean]
         elif clean in period_aliases:
             period = period_aliases[clean]
+        elif m := tile_size_pattern.match(clean):
+            ts = int(m.group(1))
+            if not (50 <= ts <= 600):
+                raise ValueError(
+                    f"Tile size must be between 50 and 600 pixels, got {ts}"
+                )
+            tile_size = ts
+        elif m := tile_size_px_pattern.match(clean):
+            ts = int(m.group(1))
+            if not (50 <= ts <= 600):
+                raise ValueError(
+                    f"Tile size must be between 50 and 600 pixels, got {ts}"
+                )
+            tile_size = ts
         elif m := dim_pattern.match(clean):
             c, r = int(m.group(1)), int(m.group(2))
-            if not (1 <= c <= 5 and 1 <= r <= 5):
+            if not (1 <= c <= 20 and 1 <= r <= 20):
                 raise ValueError(
-                    f"Collage dimensions must be between 1x1 and 5x5, got {c}x{r}"
+                    f"Collage dimensions must be between 1x1 and 20x20, got {c}x{r}"
+                )
+            if (c * r) > 400:
+                raise ValueError(
+                    f"Total tile count ({c * r}) exceeds maximum capacity of 400 tiles."
                 )
             cols, rows = c, r
         elif m := single_dim_pattern.match(clean):
             d = int(m.group(1))
-            if not (1 <= d <= 5):
-                raise ValueError(f"Collage dimension must be between 1 and 5, got {d}")
+            if not (1 <= d <= 20):
+                raise ValueError(f"Collage dimension must be between 1 and 20, got {d}")
+            if (d * d) > 400:
+                raise ValueError(
+                    f"Total tile count ({d * d}) exceeds maximum capacity of 400 tiles."
+                )
             cols, rows = d, d
         else:
             raise ValueError(
-                f"Unrecognized parameter: '{arg}'. Usage: /collage [size: 3x3] [period: week|1m|overall] [entity: album|artist|track]"
+                f"Unrecognized parameter: '{arg}'. Usage: /collage [size: 3x3|10x10] [period: week|1m|overall] [entity: album|artist|track] [tile_size: 150px]"
             )
 
-    return entity, cols, rows, period
+    return entity, cols, rows, period, tile_size
 
 
 class CollageService:
@@ -709,6 +730,7 @@ class CollageService:
         cols: int = 3,
         rows: int = 3,
         period: str = "7day",
+        tile_size: Optional[int] = None,
     ) -> BytesIO:
         """
         Generates a collage image asynchronously via asyncio.to_thread and returns a BytesIO stream.
@@ -720,6 +742,7 @@ class CollageService:
             cols=cols,
             rows=rows,
             period=period,
+            tile_size=tile_size,
         )
         bio = BytesIO()
         image.save(bio, format="PNG")

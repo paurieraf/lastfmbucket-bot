@@ -5,9 +5,10 @@
 ## Architecture & Subsystems
 `lastfmbucket-bot` is a dual-process Python application (`bot` and `admin`) with an auxiliary `ollama` container, sharing an SQLite database:
 1. **Telegram Bot Engine (`src/bot.py`, `src/commands.py`, `src/callbacks.py`, `src/services.py`)**:
-   - `python-telegram-bot` v22.5 running in polling mode.
-   - 13 slash commands: `/start`, `/status`, `/np`, `/tops`, `/preferences`, `/help`, `/changelog`, `/set`, `/privacy`, `/compare`, `/vibe`, `/roast`, `/recommend`.
-   - Callback queries with strict 64-byte compact protocol: `v|action|owner_id|entity|period`.
+   - `python-telegram-bot` v22.8 running in polling mode.
+   - 14 slash commands: `/start`, `/status`, `/np`, `/tops`, `/collage`, `/preferences`, `/help`, `/changelog`, `/set`, `/privacy`, `/compare`, `/vibe`, `/roast`, `/recommend`.
+   - Callback queries with strict 64-byte compact protocol: `v|action|owner_id|entity|period|size`.
+   - Visual composite image grid generator powered by `lastfmcollagegenerator` v0.6.0.
 2. **Database & Data Layer (`src/db.py`)**:
    - Peewee ORM 3.18.3 with SQLite in WAL mode.
    - Models: `User`, `Chat`, `CommandLog`.

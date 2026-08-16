@@ -18,24 +18,58 @@ from services import CollageService, ViewService, parse_collage_args
 
 class TestCollageArgParser(unittest.TestCase):
     def test_default_args(self):
-        entity, cols, rows, period = parse_collage_args([])
+        entity, cols, rows, period, tile_size = parse_collage_args([])
         self.assertEqual(entity, "album")
         self.assertEqual(cols, 3)
         self.assertEqual(rows, 3)
         self.assertEqual(period, "7day")
+        self.assertIsNone(tile_size)
 
     def test_custom_dimensions(self):
-        entity, cols, rows, period = parse_collage_args(["5x5"])
+        entity, cols, rows, period, tile_size = parse_collage_args(["5x5"])
         self.assertEqual(cols, 5)
         self.assertEqual(rows, 5)
 
-        entity, cols, rows, period = parse_collage_args(["3x5"])
+        entity, cols, rows, period, tile_size = parse_collage_args(["3x5"])
         self.assertEqual(cols, 3)
         self.assertEqual(rows, 5)
 
-        entity, cols, rows, period = parse_collage_args(["4"])
+        entity, cols, rows, period, tile_size = parse_collage_args(["4"])
         self.assertEqual(cols, 4)
         self.assertEqual(rows, 4)
+
+        entity, cols, rows, period, tile_size = parse_collage_args(["10x10"])
+        self.assertEqual(cols, 10)
+        self.assertEqual(rows, 10)
+
+        entity, cols, rows, period, tile_size = parse_collage_args(["10x5"])
+        self.assertEqual(cols, 10)
+        self.assertEqual(rows, 5)
+
+        entity, cols, rows, period, tile_size = parse_collage_args(["20x20"])
+        self.assertEqual(cols, 20)
+        self.assertEqual(rows, 20)
+
+    def test_tile_size_parsing(self):
+        entity, cols, rows, period, tile_size = parse_collage_args(["150px"])
+        self.assertEqual(tile_size, 150)
+
+        entity, cols, rows, period, tile_size = parse_collage_args(["ts:200"])
+        self.assertEqual(tile_size, 200)
+
+        entity, cols, rows, period, tile_size = parse_collage_args(["size=100"])
+        self.assertEqual(tile_size, 100)
+
+        entity, cols, rows, period, tile_size = parse_collage_args(["tile_size:300"])
+        self.assertEqual(tile_size, 300)
+
+    def test_invalid_tile_size_raises(self):
+        with self.assertRaises(ValueError):
+            parse_collage_args(["40px"])
+        with self.assertRaises(ValueError):
+            parse_collage_args(["700px"])
+        with self.assertRaises(ValueError):
+            parse_collage_args(["ts:10"])
 
     def test_custom_entities(self):
         self.assertEqual(parse_collage_args(["artists"])[0], "artist")
@@ -52,19 +86,24 @@ class TestCollageArgParser(unittest.TestCase):
         self.assertEqual(parse_collage_args(["overall"])[3], "overall")
 
     def test_mixed_order_arguments(self):
-        entity, cols, rows, period = parse_collage_args(["overall", "artist", "5x5"])
+        entity, cols, rows, period, tile_size = parse_collage_args(
+            ["overall", "artist", "10x10", "150px"]
+        )
         self.assertEqual(entity, "artist")
-        self.assertEqual(cols, 5)
-        self.assertEqual(rows, 5)
+        self.assertEqual(cols, 10)
+        self.assertEqual(rows, 10)
         self.assertEqual(period, "overall")
+        self.assertEqual(tile_size, 150)
 
     def test_invalid_dimension_raises(self):
         with self.assertRaises(ValueError):
-            parse_collage_args(["6x6"])
+            parse_collage_args(["21x21"])
         with self.assertRaises(ValueError):
             parse_collage_args(["0x0"])
         with self.assertRaises(ValueError):
-            parse_collage_args(["10"])
+            parse_collage_args(["25"])
+        with self.assertRaises(ValueError):
+            parse_collage_args(["20x21"])  # > 400 tiles
 
     def test_unrecognized_argument_raises(self):
         with self.assertRaises(ValueError):
@@ -78,7 +117,7 @@ class TestCallbackProtocol(unittest.TestCase):
             owner_id=987654321,
             entity=Entity.ARTIST,
             period=Period.WEEK,
-            size="3x3",
+            size="10x10",
         )
         encoded = cb.encode()
         self.assertLessEqual(len(encoded.encode("utf-8")), 64)
@@ -89,7 +128,7 @@ class TestCallbackProtocol(unittest.TestCase):
         self.assertEqual(decoded.owner_id, 987654321)
         self.assertEqual(decoded.entity, Entity.ARTIST)
         self.assertEqual(decoded.period, Period.WEEK)
-        self.assertEqual(decoded.size, "3x3")
+        self.assertEqual(decoded.size, "10x10")
 
     def test_collage_conversion_helpers(self):
         cb = Callback(
@@ -111,10 +150,23 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
 
         service = CollageService(api_key="dummy_key", api_secret="dummy_secret")
         bio = await service.generate_collage_image(
-            username="testuser", entity="album", cols=1, rows=1, period="7day"
+            username="testuser",
+            entity="album",
+            cols=10,
+            rows=10,
+            period="7day",
+            tile_size=150,
         )
 
         self.assertIsInstance(bio, BytesIO)
+        mock_gen_instance.generate.assert_called_once_with(
+            entity="album",
+            username="testuser",
+            cols=10,
+            rows=10,
+            period="7day",
+            tile_size=150,
+        )
         # Verify it's a valid PNG image stream
         loaded_img = Image.open(bio)
         self.assertEqual(loaded_img.size, (300, 300))
@@ -140,10 +192,14 @@ class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("size", msg.lower())
         self.assertIsNotNone(kb)
+        # Verify 2 rows of sizes
+        self.assertEqual(len(kb.inline_keyboard), 2)
+        self.assertEqual(len(kb.inline_keyboard[0]), 3)
+        self.assertEqual(len(kb.inline_keyboard[1]), 3)
 
         # Step 3: Entity and size chosen, no period
         msg, kb = await view_service.build_collage_selection_response(
-            telegram_user_id=123, entity=Entity.ALBUM, size="3x3"
+            telegram_user_id=123, entity=Entity.ALBUM, size="10x10"
         )
         self.assertIn("period", msg.lower())
         self.assertIsNotNone(kb)

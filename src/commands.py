@@ -452,7 +452,7 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Parse arguments
     try:
-        entity, cols, rows, period = parse_collage_args(context.args)
+        entity, cols, rows, period, tile_size = parse_collage_args(context.args)
     except ValueError as e:
         await message.reply_text(f"⚠️ {e}")
         return
@@ -477,6 +477,7 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             cols=cols,
             rows=rows,
             period=period,
+            tile_size=tile_size,
         )
         caption = view_service.build_collage_caption(
             entity_type=entity,
