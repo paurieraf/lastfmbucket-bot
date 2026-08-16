@@ -7,7 +7,7 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 import commands
 import config
 from lastfm import LastfmClient
-from services import LastfmService, ViewService
+from services import CollageService, LastfmService, ViewService
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -32,16 +32,19 @@ def main() -> None:
     lastfm_client = LastfmClient()
     lastfm_service = LastfmService(lastfm_client)
     view_service = ViewService(lastfm_service)
+    collage_service = CollageService(config.LASTFM_API_KEY, config.LASTFM_API_SECRET)
 
     # Add services to bot_data
     app.bot_data["lastfm_service"] = lastfm_service
     app.bot_data["view_service"] = view_service
+    app.bot_data["collage_service"] = collage_service
 
     # Add command handlers
     app.add_handler(CommandHandler(commands.START_COMMAND, commands.start))
     app.add_handler(CommandHandler(commands.STATUS_COMMAND, commands.status))
     app.add_handler(CommandHandler(commands.NOW_PLAYING_COMMAND, commands.now_playing))
     app.add_handler(CommandHandler(commands.TOPS_COMMAND, commands.tops))
+    app.add_handler(CommandHandler(commands.COLLAGE_COMMAND, commands.collage))
     app.add_handler(CommandHandler(commands.PREFERENCES_COMMAND, commands.preferences))
     app.add_handler(CommandHandler(commands.HELP_COMMAND, commands.help_command))
     app.add_handler(CommandHandler(commands.CHANGELOG_COMMAND, commands.changelog))

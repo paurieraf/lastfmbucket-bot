@@ -28,6 +28,7 @@ It ships with a **web-based administration panel** (NiceGUI) and is designed to 
 | 🎵 **Now Playing** | Show currently playing track with album art | `/np` |
 | 📋 **Recent Tracks** | View last 5 scrobbled tracks with timestamps | `/status` |
 | 🏆 **Top Charts** | Interactive top artists / albums / tracks across 6 time periods | `/tops` |
+| 🎨 **Collage** | Visual image grid (3x3, 4x4, 5x5) of top albums, artists or tracks | `/collage [size] [period] [entity]` |
 | 👥 **Comparison** | Compare your taste with another Last.fm user | `/compare <username>` |
 | 🤖 **AI Vibe** | AI mood analysis of your recent listening | `/vibe` |
 | 🔥 **AI Roast** | Humorous AI critique of your music taste | `/roast` |

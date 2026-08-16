@@ -31,6 +31,7 @@ class Action(StrEnum):
     NP_MORE = "nm"
     PREF_UNLINK = "pu"
     TOPS = "t"
+    COLLAGE = "cl"
 
 
 class Entity(StrEnum):
@@ -60,13 +61,15 @@ class Callback:
     Encodes all information needed to handle a button press:
     - action: what to do
     - owner_id: the telegram user whose data to show (fixes the group bug)
-    - entity/period: optional parameters for tops command
+    - entity/period: optional parameters for tops/collage command
+    - size: optional size parameter for collage command (e.g. '3x3', '5x5')
     """
 
     action: Action
     owner_id: int
     entity: Optional[Entity] = None
     period: Optional[Period] = None
+    size: Optional[str] = None
 
     def encode(self) -> str:
         """Encode to compact string format for Telegram callback_data."""
@@ -76,6 +79,7 @@ class Callback:
             str(self.owner_id),
             self.entity or "",
             self.period or "",
+            self.size or "",
         ]
         encoded = SEP.join(parts)
         assert len(encoded.encode("utf-8")) <= 64, f"Callback too long: {encoded}"
@@ -97,12 +101,14 @@ class Callback:
             owner_id = int(parts[2])
             entity = Entity(parts[3]) if len(parts) > 3 and parts[3] else None
             period = Period(parts[4]) if len(parts) > 4 and parts[4] else None
+            size = parts[5] if len(parts) > 5 and parts[5] else None
 
             return cls(
                 action=action,
                 owner_id=owner_id,
                 entity=entity,
                 period=period,
+                size=size,
             )
         except (ValueError, IndexError):
             return None
@@ -135,6 +141,27 @@ class Callback:
             Period.OVERALL: lfm.Period.OVERALL,
         }
         return mapping.get(self.period)
+
+    def to_collage_entity_str(self) -> str:
+        """Convert callback Entity to collage generator entity string."""
+        mapping = {
+            Entity.ARTIST: "artist",
+            Entity.ALBUM: "album",
+            Entity.TRACK: "track",
+        }
+        return mapping.get(self.entity, "album") if self.entity else "album"
+
+    def to_collage_period_str(self) -> str:
+        """Convert callback Period to collage generator period string."""
+        mapping = {
+            Period.WEEK: "7day",
+            Period.MONTH_1: "1month",
+            Period.MONTH_3: "3month",
+            Period.MONTH_6: "6month",
+            Period.YEAR: "12month",
+            Period.OVERALL: "overall",
+        }
+        return mapping.get(self.period, "7day") if self.period else "7day"
 
 
 def entity_from_lastfm(entity_type: lastfm.EntityType) -> Entity:

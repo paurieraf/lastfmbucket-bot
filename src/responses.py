@@ -52,6 +52,26 @@ tops_no_available_response = Template("""
 There are no tops available for this user: $lastfm_username
 """)
 
+collage_choose_entity_type = Template("""
+🎨 Choose the entity type for your collage:
+""")
+
+collage_choose_size = Template("""
+🎨 Choose the grid size for your $entity_type collage:
+""")
+
+collage_choose_period = Template("""
+🎨 Choose the period for your $size $entity_type collage:
+""")
+
+collage_caption = Template("""
+🎨 <b>Top $entity_type collage</b> ($size, $period) for <a href="https://www.last.fm/user/$lastfm_username">$lastfm_username</a>
+""")
+
+collage_error = Template("""
+🚫 Could not generate collage: $error
+""")
+
 privacy = Template("""\
 <b>Privacy Policy</b>
 This bot is a hobby project and is not a commercial product.
@@ -75,7 +95,7 @@ This bot is a hobby project and is not a commercial product.
 For any questions or concerns, please contact the developer.
 """)
 
-preferences= Template("""
+preferences = Template("""
 What do you want to do?
 """)
 

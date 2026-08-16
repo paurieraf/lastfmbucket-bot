@@ -1,9 +1,8 @@
-"""
-This module defines the service layer for handling business logic and view rendering.
-"""
-
+import asyncio
 import datetime
 import logging
+import re
+from io import BytesIO
 from typing import Optional
 
 import humanize
@@ -11,12 +10,19 @@ import pylast
 import telegram
 from emoji import emojize
 from telegram import InlineKeyboardButton
+from lastfmcollagegenerator.collage_generator import CollageGenerator
 
 import config
 import db
 import lastfm
 import responses
-from callbacks import Action, Callback, Entity, Period as CallbackPeriod, entity_from_lastfm, period_from_lastfm
+from callbacks import (
+    Action,
+    Callback,
+    Entity,
+    Period as CallbackPeriod,
+    entity_from_lastfm,
+)
 from lastfm import EntityType, LastfmClient, Period
 
 logging.basicConfig(
@@ -166,7 +172,9 @@ class ViewService:
                 0,
                 telegram.InlineKeyboardButton(
                     "🖼️",
-                    callback_data=Callback(Action.NP_LESS_COVER, telegram_user_id).encode(),
+                    callback_data=Callback(
+                        Action.NP_LESS_COVER, telegram_user_id
+                    ).encode(),
                 ),
             )
 
@@ -245,7 +253,9 @@ class ViewService:
                 [
                     telegram.InlineKeyboardButton(
                         "🖼️",
-                        callback_data=Callback(Action.NP_MORE, telegram_user_id).encode(),
+                        callback_data=Callback(
+                            Action.NP_MORE, telegram_user_id
+                        ).encode(),
                     )
                 ],
             )
@@ -293,9 +303,7 @@ class ViewService:
                 ]
             ]
             reply_markup = telegram.InlineKeyboardMarkup(keyboard)
-            return emojize(
-                responses.tops_choose_entity_type.substitute()
-            ), reply_markup
+            return emojize(responses.tops_choose_entity_type.substitute()), reply_markup
 
         if not period:
             period_display = {
@@ -315,7 +323,10 @@ class ViewService:
                     InlineKeyboardButton(
                         name,
                         callback_data=Callback(
-                            Action.TOPS, telegram_user_id, entity=cb_entity, period=cb_period
+                            Action.TOPS,
+                            telegram_user_id,
+                            entity=cb_entity,
+                            period=cb_period,
                         ).encode(),
                     )
                 )
@@ -327,9 +338,7 @@ class ViewService:
 
             reply_markup = telegram.InlineKeyboardMarkup(keyboard)
             return emojize(
-                responses.tops_choose_period.substitute(
-                    entity_type=entity_type
-                )
+                responses.tops_choose_period.substitute(entity_type=entity_type)
             ), reply_markup
 
         tops = self.lastfm_service.get_tops(telegram_user_id, entity_type, period)
@@ -379,7 +388,9 @@ class ViewService:
             changelog_content = config.CHANGELOG_PATH.read_text(encoding="utf-8")
             max_length = 4000
             if len(changelog_content) > max_length:
-                changelog_content = changelog_content[:max_length] + "\n\n... (truncated)"
+                changelog_content = (
+                    changelog_content[:max_length] + "\n\n... (truncated)"
+                )
             return f"<pre>{changelog_content}</pre>"
         except FileNotFoundError:
             return "Changelog not available."
@@ -392,7 +403,9 @@ class ViewService:
             [
                 telegram.InlineKeyboardButton(
                     "Unlink your account",
-                    callback_data=Callback(Action.PREF_UNLINK, telegram_user_id).encode(),
+                    callback_data=Callback(
+                        Action.PREF_UNLINK, telegram_user_id
+                    ).encode(),
                 )
             ]
         ]
@@ -412,16 +425,24 @@ class ViewService:
         if not user:
             return emojize(responses.compare_no_lastfm_set.substitute())
 
-        my_stats = self.lastfm_service._lastfm_client.get_user_stats(user.lastfm_username)
-        other_stats = self.lastfm_service._lastfm_client.get_user_stats(other_lastfm_username)
+        my_stats = self.lastfm_service._lastfm_client.get_user_stats(
+            user.lastfm_username
+        )
+        other_stats = self.lastfm_service._lastfm_client.get_user_stats(
+            other_lastfm_username
+        )
 
         if not my_stats:
             return emojize(
-                responses.compare_user_not_found.substitute(username=user.lastfm_username)
+                responses.compare_user_not_found.substitute(
+                    username=user.lastfm_username
+                )
             )
         if not other_stats:
             return emojize(
-                responses.compare_user_not_found.substitute(username=other_lastfm_username)
+                responses.compare_user_not_found.substitute(
+                    username=other_lastfm_username
+                )
             )
 
         common_artists = self.lastfm_service._lastfm_client.get_common_artists(
@@ -454,3 +475,253 @@ class ViewService:
             top_artists2=top_artists2_text,
         )
         return emojize(response)
+
+    @staticmethod
+    def build_collage_caption(
+        entity_type: str, size: str, period: str, lastfm_username: str
+    ) -> str:
+        """Builds the caption HTML string for a generated collage."""
+        period_display_map = {
+            "7day": "1 week",
+            "1month": "1 month",
+            "3month": "3 months",
+            "6month": "6 months",
+            "12month": "1 year",
+            "overall": "all time",
+        }
+        period_label = period_display_map.get(period, period)
+        return responses.collage_caption.substitute(
+            entity_type=entity_type.capitalize(),
+            size=size,
+            period=period_label,
+            lastfm_username=lastfm_username,
+        )
+
+    async def build_collage_selection_response(
+        self,
+        telegram_user_id: int,
+        entity: Optional[Entity] = None,
+        size: Optional[str] = None,
+        period: Optional[CallbackPeriod] = None,
+    ) -> tuple[str, telegram.InlineKeyboardMarkup | None]:
+        """
+        Builds an interactive selection interface for collage parameters.
+        Returns prompt message and InlineKeyboardMarkup.
+        """
+        if not entity:
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "👤 Artist",
+                        callback_data=Callback(
+                            Action.COLLAGE, telegram_user_id, entity=Entity.ARTIST
+                        ).encode(),
+                    ),
+                    InlineKeyboardButton(
+                        "💿 Album",
+                        callback_data=Callback(
+                            Action.COLLAGE, telegram_user_id, entity=Entity.ALBUM
+                        ).encode(),
+                    ),
+                    InlineKeyboardButton(
+                        "🎵 Track",
+                        callback_data=Callback(
+                            Action.COLLAGE, telegram_user_id, entity=Entity.TRACK
+                        ).encode(),
+                    ),
+                ]
+            ]
+            reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+            return emojize(
+                responses.collage_choose_entity_type.substitute()
+            ), reply_markup
+
+        if not size:
+            sizes = ["3x3", "4x4", "5x5", "3x5"]
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        s,
+                        callback_data=Callback(
+                            Action.COLLAGE, telegram_user_id, entity=entity, size=s
+                        ).encode(),
+                    )
+                    for s in sizes[:2]
+                ],
+                [
+                    InlineKeyboardButton(
+                        s,
+                        callback_data=Callback(
+                            Action.COLLAGE, telegram_user_id, entity=entity, size=s
+                        ).encode(),
+                    )
+                    for s in sizes[2:]
+                ],
+            ]
+            entity_name = entity.name.lower()
+            reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+            return (
+                emojize(
+                    responses.collage_choose_size.substitute(entity_type=entity_name)
+                ),
+                reply_markup,
+            )
+
+        if not period:
+            period_display = {
+                CallbackPeriod.WEEK: "1week",
+                CallbackPeriod.MONTH_1: "1month",
+                CallbackPeriod.MONTH_3: "3month",
+                CallbackPeriod.MONTH_6: "6month",
+                CallbackPeriod.YEAR: "1year",
+                CallbackPeriod.OVERALL: "alltime",
+            }
+            keyboard = []
+            row = []
+            for cb_period, name in period_display.items():
+                row.append(
+                    InlineKeyboardButton(
+                        name,
+                        callback_data=Callback(
+                            Action.COLLAGE,
+                            telegram_user_id,
+                            entity=entity,
+                            size=size,
+                            period=cb_period,
+                        ).encode(),
+                    )
+                )
+                if len(row) == 3:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+
+            entity_name = entity.name.lower()
+            reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+            return (
+                emojize(
+                    responses.collage_choose_period.substitute(
+                        size=size, entity_type=entity_name
+                    )
+                ),
+                reply_markup,
+            )
+
+        return "", None
+
+
+def parse_collage_args(args: list[str]) -> tuple[str, int, int, str]:
+    """
+    Parses CLI arguments for collage command.
+    Returns (entity, cols, rows, period).
+    """
+    entity = "album"
+    cols = 3
+    rows = 3
+    period = "7day"
+
+    entity_aliases = {
+        "album": "album",
+        "albums": "album",
+        "alb": "album",
+        "artist": "artist",
+        "artists": "artist",
+        "art": "artist",
+        "track": "track",
+        "tracks": "track",
+        "song": "track",
+        "songs": "track",
+        "tra": "track",
+    }
+    period_aliases = {
+        "7d": "7day",
+        "7day": "7day",
+        "7days": "7day",
+        "week": "7day",
+        "1w": "7day",
+        "1week": "7day",
+        "1m": "1month",
+        "1month": "1month",
+        "month": "1month",
+        "3m": "3month",
+        "3month": "3month",
+        "3months": "3month",
+        "6m": "6month",
+        "6month": "6month",
+        "6months": "6month",
+        "1y": "12month",
+        "1year": "12month",
+        "12m": "12month",
+        "12month": "12month",
+        "year": "12month",
+        "overall": "overall",
+        "all": "overall",
+        "alltime": "overall",
+        "always": "overall",
+    }
+
+    dim_pattern = re.compile(r"^(\d+)x(\d+)$", re.IGNORECASE)
+    single_dim_pattern = re.compile(r"^(\d+)$")
+
+    for arg in args:
+        clean = arg.strip().lower()
+        if not clean:
+            continue
+        if clean in entity_aliases:
+            entity = entity_aliases[clean]
+        elif clean in period_aliases:
+            period = period_aliases[clean]
+        elif m := dim_pattern.match(clean):
+            c, r = int(m.group(1)), int(m.group(2))
+            if not (1 <= c <= 5 and 1 <= r <= 5):
+                raise ValueError(
+                    f"Collage dimensions must be between 1x1 and 5x5, got {c}x{r}"
+                )
+            cols, rows = c, r
+        elif m := single_dim_pattern.match(clean):
+            d = int(m.group(1))
+            if not (1 <= d <= 5):
+                raise ValueError(f"Collage dimension must be between 1 and 5, got {d}")
+            cols, rows = d, d
+        else:
+            raise ValueError(
+                f"Unrecognized parameter: '{arg}'. Usage: /collage [size: 3x3] [period: week|1m|overall] [entity: album|artist|track]"
+            )
+
+    return entity, cols, rows, period
+
+
+class CollageService:
+    """
+    A service class to handle collage generation using lastfmcollagegenerator.
+    """
+
+    def __init__(self, api_key: str | None = None, api_secret: str | None = None):
+        key = api_key or config.LASTFM_API_KEY or ""
+        secret = api_secret or config.LASTFM_API_SECRET or ""
+        self._generator = CollageGenerator(lastfm_api_key=key, lastfm_api_secret=secret)
+
+    async def generate_collage_image(
+        self,
+        username: str,
+        entity: str = "album",
+        cols: int = 3,
+        rows: int = 3,
+        period: str = "7day",
+    ) -> BytesIO:
+        """
+        Generates a collage image asynchronously via asyncio.to_thread and returns a BytesIO stream.
+        """
+        image = await asyncio.to_thread(
+            self._generator.generate,
+            entity=entity,
+            username=username,
+            cols=cols,
+            rows=rows,
+            period=period,
+        )
+        bio = BytesIO()
+        image.save(bio, format="PNG")
+        bio.seek(0)
+        return bio

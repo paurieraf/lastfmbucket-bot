@@ -17,8 +17,9 @@ from telegram.ext import ContextTypes
 import db
 import ai
 import lastfm
+import responses
 from callbacks import Action, Callback
-from services import ViewService
+from services import CollageService, ViewService, parse_collage_args
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -59,6 +60,7 @@ START_COMMAND = "start"
 STATUS_COMMAND = "status"
 NOW_PLAYING_COMMAND = "np"
 TOPS_COMMAND = "tops"
+COLLAGE_COMMAND = "collage"
 PREFERENCES_COMMAND = "preferences"
 HELP_COMMAND = "help"
 CHANGELOG_COMMAND = "changelog"
@@ -108,12 +110,82 @@ async def _handle_tops(
     )
 
 
+async def _handle_collage(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    query = update.callback_query
+    user_id = cb.owner_id
+    view_service: ViewService = context.bot_data["view_service"]
+    collage_service: CollageService = context.bot_data["collage_service"]
+
+    # If all 3 parameters are chosen, generate collage
+    if cb.entity and cb.size and cb.period:
+        user = db.get_user(user_id)
+        if not user:
+            await query.edit_message_text(
+                emojize(responses.user_not_found.substitute())
+            )
+            return
+
+        entity_str = cb.to_collage_entity_str()
+        period_str = cb.to_collage_period_str()
+        size_str = cb.size
+        try:
+            cols, rows = map(int, size_str.lower().split("x"))
+        except Exception:
+            cols, rows = 3, 3
+
+        await query.edit_message_text(
+            f"🎨 Generating your {size_str} {entity_str} collage..."
+        )
+        if update.effective_chat:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=telegram.constants.ChatAction.UPLOAD_PHOTO,
+            )
+
+        try:
+            bio = await collage_service.generate_collage_image(
+                username=user.lastfm_username,
+                entity=entity_str,
+                cols=cols,
+                rows=rows,
+                period=period_str,
+            )
+            caption = view_service.build_collage_caption(
+                entity_type=entity_str,
+                size=size_str,
+                period=period_str,
+                lastfm_username=user.lastfm_username,
+            )
+            await query.message.reply_photo(
+                photo=bio, caption=caption, parse_mode=telegram.constants.ParseMode.HTML
+            )
+        except Exception as e:
+            logger.exception(f"Error generating collage: {e}")
+            await query.message.reply_text(
+                emojize(responses.collage_error.substitute(error=str(e)))
+            )
+        return
+
+    # Otherwise show next step in interactive selection
+    response, reply_markup = await view_service.build_collage_selection_response(
+        user_id, entity=cb.entity, size=cb.size, period=cb.period
+    )
+    await query.edit_message_text(
+        text=response,
+        reply_markup=reply_markup,
+        parse_mode=telegram.constants.ParseMode.HTML,
+    )
+
+
 CALLBACK_ROUTES = {
     Action.NP_LESS: _handle_np_less,
     Action.NP_LESS_COVER: _handle_np_less_cover,
     Action.NP_MORE: _handle_np_more,
     Action.PREF_UNLINK: _handle_pref_unlink,
     Action.TOPS: _handle_tops,
+    Action.COLLAGE: _handle_collage,
 }
 
 
@@ -333,6 +405,76 @@ def _parse_tops_args(
     return entity_type, period
 
 
+@log_command(COLLAGE_COMMAND)
+async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generates a Last.fm collage image."""
+    logger.info(
+        f"username: {update.message.from_user.username} "
+        f"- issued command: {update.message.text}"
+    )
+    user_id = update.message.from_user.id
+    user = db.get_user(user_id)
+    if not user:
+        await update.message.reply_text(emojize(responses.user_not_found.substitute()))
+        return
+
+    view_service: ViewService = context.bot_data["view_service"]
+    collage_service: CollageService = context.bot_data["collage_service"]
+
+    if not context.args:
+        # Show interactive selection
+        response, reply_markup = await view_service.build_collage_selection_response(
+            user_id
+        )
+        await update.message.reply_html(response, reply_markup=reply_markup)
+        return
+
+    # Parse arguments
+    try:
+        entity, cols, rows, period = parse_collage_args(context.args)
+    except ValueError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+        return
+
+    size_str = f"{cols}x{rows}"
+    status_msg = await update.message.reply_text(
+        f"🎨 Generating your {size_str} {entity} collage..."
+    )
+    if update.effective_chat:
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action=telegram.constants.ChatAction.UPLOAD_PHOTO,
+        )
+
+    try:
+        bio = await collage_service.generate_collage_image(
+            username=user.lastfm_username,
+            entity=entity,
+            cols=cols,
+            rows=rows,
+            period=period,
+        )
+        caption = view_service.build_collage_caption(
+            entity_type=entity,
+            size=size_str,
+            period=period,
+            lastfm_username=user.lastfm_username,
+        )
+        await update.message.reply_photo(
+            photo=bio, caption=caption, parse_mode=telegram.constants.ParseMode.HTML
+        )
+    except Exception as e:
+        logger.exception(f"Error generating collage: {e}")
+        await update.message.reply_text(
+            emojize(responses.collage_error.substitute(error=str(e)))
+        )
+    finally:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+
 @log_command(PREFERENCES_COMMAND)
 async def preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays user preferences options."""
@@ -444,7 +586,9 @@ async def vibe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Generate vibe
     vibe_text = await ai.generate_vibe(track_list, current)
-    await update.message.reply_text(f"🎧 *Your Vibe*\n\n{vibe_text}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🎧 *Your Vibe*\n\n{vibe_text}", parse_mode="Markdown"
+    )
 
 
 @log_command(ROAST_COMMAND)
@@ -475,11 +619,15 @@ async def roast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Format for AI
     artists_list = [item.item.name for item in top_artists[:10]]
-    tracks_list = [f"{item.item.artist} - {item.item.title}" for item in (top_tracks or [])[:5]]
+    tracks_list = [
+        f"{item.item.artist} - {item.item.title}" for item in (top_tracks or [])[:5]
+    ]
 
     # Generate roast
     roast_text = await ai.generate_roast(artists_list, tracks_list)
-    await update.message.reply_text(f"🎤 *Music Taste Roast*\n\n{roast_text}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🎤 *Music Taste Roast*\n\n{roast_text}", parse_mode="Markdown"
+    )
 
 
 @log_command(RECOMMEND_COMMAND)
@@ -511,6 +659,5 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Generate recommendations
     rec_text = await ai.generate_recommendations(artists_list)
     await update.message.reply_text(
-        f"💡 *Recommendations Based On Your Taste*\n\n{rec_text}",
-        parse_mode="Markdown",
+        f"💡 *Recommendations Based On Your Taste*\n\n{rec_text}", parse_mode="Markdown"
     )
