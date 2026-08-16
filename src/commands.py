@@ -5,17 +5,18 @@ This module contains handlers for commands and callback queries.
 """
 
 import functools
+import html
 import logging
 from typing import Callable, Optional
 
 import telegram.constants
 from dotenv import load_dotenv
 from emoji import emojize
-from telegram import LinkPreviewOptions, Update
+from telegram import BotCommand, Update
 from telegram.ext import ContextTypes
 
-import db
 import ai
+import db
 import lastfm
 import responses
 from callbacks import Action, Callback
@@ -37,16 +38,17 @@ def log_command(command_name: str) -> Callable:
         async def wrapper(
             update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
         ):
-            message = update.message
-            if message and message.from_user:
+            user = update.effective_user
+            chat = update.effective_chat
+            if user:
                 db.log_command(
-                    user_id=message.from_user.id,
-                    username=message.from_user.username or "",
+                    user_id=user.id,
+                    username=user.username or "",
                     command=command_name,
                     args=" ".join(context.args) if context.args else "",
-                    chat_id=message.chat_id,
-                    chat_type=message.chat.type,
-                    chat_name=message.chat.title or message.chat.username or "",
+                    chat_id=chat.id if chat else 0,
+                    chat_type=chat.type if chat else "",
+                    chat_name=(chat.title or chat.username or "") if chat else "",
                 )
             return await func(update, context, *args, **kwargs)
 
@@ -70,6 +72,23 @@ COMPARE_COMMAND = "compare"
 VIBE_COMMAND = "vibe"
 ROAST_COMMAND = "roast"
 RECOMMEND_COMMAND = "recommend"
+
+# Public bot commands registered with Telegram UI
+BOT_COMMANDS: list[BotCommand] = [
+    BotCommand(NOW_PLAYING_COMMAND, "Show currently playing track"),
+    BotCommand(STATUS_COMMAND, "Show recent scrobbles"),
+    BotCommand(TOPS_COMMAND, "Show top artists, albums, or tracks"),
+    BotCommand(COLLAGE_COMMAND, "Generate visual collage of your top items"),
+    BotCommand(SET_COMMAND, "Link your Last.fm username"),
+    BotCommand(COMPARE_COMMAND, "Compare listening stats with another user"),
+    BotCommand(VIBE_COMMAND, "AI analysis of your current vibe"),
+    BotCommand(ROAST_COMMAND, "AI roast of your music taste"),
+    BotCommand(RECOMMEND_COMMAND, "AI-powered music recommendations"),
+    BotCommand(PREFERENCES_COMMAND, "Manage bot preferences"),
+    BotCommand(HELP_COMMAND, "Show bot help and description"),
+    BotCommand(CHANGELOG_COMMAND, "Show recent bot changelog"),
+    BotCommand(PRIVACY_COMMAND, "Show privacy policy"),
+]
 
 
 async def _handle_np_less(
@@ -114,6 +133,9 @@ async def _handle_collage(
     update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
 ) -> None:
     query = update.callback_query
+    if not query:
+        return
+
     user_id = cb.owner_id
     view_service: ViewService = context.bot_data["view_service"]
     collage_service: CollageService = context.bot_data["collage_service"]
@@ -139,10 +161,13 @@ async def _handle_collage(
             f"🎨 Generating your {size_str} {entity_str} collage..."
         )
         if update.effective_chat:
-            await context.bot.send_chat_action(
-                chat_id=update.effective_chat.id,
-                action=telegram.constants.ChatAction.UPLOAD_PHOTO,
-            )
+            try:
+                await context.bot.send_chat_action(
+                    chat_id=update.effective_chat.id,
+                    action=telegram.constants.ChatAction.UPLOAD_PHOTO,
+                )
+            except Exception:
+                pass
 
         try:
             bio = await collage_service.generate_collage_image(
@@ -158,25 +183,21 @@ async def _handle_collage(
                 period=period_str,
                 lastfm_username=user.lastfm_username,
             )
-            await query.message.reply_photo(
-                photo=bio, caption=caption, parse_mode=telegram.constants.ParseMode.HTML
-            )
+            if query.message:
+                await query.message.reply_photo(photo=bio, caption=caption)
         except Exception as e:
             logger.exception(f"Error generating collage: {e}")
-            await query.message.reply_text(
-                emojize(responses.collage_error.substitute(error=str(e)))
-            )
+            if query.message:
+                await query.message.reply_text(
+                    emojize(responses.collage_error.substitute(error=str(e)))
+                )
         return
 
     # Otherwise show next step in interactive selection
     response, reply_markup = await view_service.build_collage_selection_response(
         user_id, entity=cb.entity, size=cb.size, period=cb.period
     )
-    await query.edit_message_text(
-        text=response,
-        reply_markup=reply_markup,
-        parse_mode=telegram.constants.ParseMode.HTML,
-    )
+    await query.edit_message_text(text=response, reply_markup=reply_markup)
 
 
 CALLBACK_ROUTES = {
@@ -192,6 +213,9 @@ CALLBACK_ROUTES = {
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route callback queries to appropriate handlers using typed Callback data."""
     query = update.callback_query
+    if not query:
+        return
+
     await query.answer()
 
     cb = Callback.decode(query.data or "")
@@ -210,13 +234,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 @log_command(START_COMMAND)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message to the user."""
-    logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- id: {update.message.from_user.id} started a private chat with the bot"
-    )
+    user = update.effective_user
+    if user:
+        logger.info(
+            f"username: {user.username} - id: {user.id} started a chat with the bot"
+        )
     view_service: ViewService = context.bot_data["view_service"]
-    response = await view_service.build_start_response(update.message.from_user)
-    await update.message.reply_text(response)
+    response = await view_service.build_start_response(user)
+    if update.effective_message:
+        await update.effective_message.reply_text(response)
 
 
 @log_command(NOW_PLAYING_COMMAND)
@@ -228,8 +254,14 @@ async def now_playing(
 ) -> None:
     """Fetches and displays the user's currently playing track."""
     from_button = update.callback_query is not None
-    message = update.callback_query.message if from_button else update.message
-    user_id = telegram_user_id or update.message.from_user.id
+    message = (
+        update.callback_query.message if from_button else update.effective_message
+    )
+    user_id = telegram_user_id or (
+        update.effective_user.id if update.effective_user else None
+    )
+    if not user_id or not message:
+        return
 
     view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup, cover_url = await view_service.build_np_response(
@@ -239,27 +271,14 @@ async def now_playing(
     if from_button and show_cover:
         if cover_url:
             await message.edit_media(
-                telegram.InputMediaPhoto(
-                    media=cover_url,
-                    caption=response,
-                    parse_mode=telegram.constants.ParseMode.HTML,
-                ),
+                telegram.InputMediaPhoto(media=cover_url, caption=response),
                 reply_markup=reply_markup,
             )
         else:
             # No cover available - just edit the text and remove the cover button
-            await message.edit_text(
-                response,
-                reply_markup=reply_markup,
-                parse_mode=telegram.constants.ParseMode.HTML,
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-            )
+            await message.edit_text(response, reply_markup=reply_markup)
     else:
-        await message.reply_html(
-            response,
-            reply_markup=reply_markup,
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
+        await message.reply_text(response, reply_markup=reply_markup)
 
 
 @log_command(SET_COMMAND)
@@ -267,20 +286,24 @@ async def lastfm_username_set(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """Sets the user's Last.fm username."""
+    user = update.effective_user
+    message = update.effective_message
+    if not message or not user:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or SET_COMMAND}"
     )
     if not context.args:
-        await update.message.reply_text("Please provide a Last.fm username.")
+        await message.reply_text("Please provide a Last.fm username. Usage: /set <username>")
         return
 
     lastfm_username = context.args[0]
     view_service: ViewService = context.bot_data["view_service"]
     response = await view_service.build_lastfm_username_set_response(
-        telegram_user=update.message.from_user, lastfm_username=lastfm_username
+        telegram_user=user, lastfm_username=lastfm_username
     )
-    await update.message.reply_text(response)
+    await message.reply_text(response)
 
 
 @log_command(STATUS_COMMAND)
@@ -292,8 +315,14 @@ async def status(
 ) -> None:
     """Fetches and displays the user's recent tracks."""
     from_button = update.callback_query is not None
-    message = update.callback_query.message if from_button else update.message
-    user_id = telegram_user_id or update.message.from_user.id
+    message = (
+        update.callback_query.message if from_button else update.effective_message
+    )
+    user_id = telegram_user_id or (
+        update.effective_user.id if update.effective_user else None
+    )
+    if not user_id or not message:
+        return
 
     view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup, cover_url = await view_service.build_status_response(
@@ -302,19 +331,11 @@ async def status(
 
     if from_button and show_cover:
         await message.edit_media(
-            telegram.InputMediaPhoto(
-                media=cover_url,
-                caption=response,
-                parse_mode=telegram.constants.ParseMode.HTML,
-            ),
+            telegram.InputMediaPhoto(media=cover_url, caption=response),
             reply_markup=reply_markup,
         )
     else:
-        await message.reply_html(
-            response,
-            reply_markup=reply_markup,
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
+        await message.reply_text(response, reply_markup=reply_markup)
 
 
 @log_command(TOPS_COMMAND)
@@ -329,22 +350,27 @@ async def tops(
     from_button = update.callback_query is not None
 
     if from_button:
-        logger.info(
-            f"username: {update.callback_query.from_user.username} "
-            f"- pressed button: {update.callback_query.data}"
-        )
-        message = update.callback_query.message
+        query = update.callback_query
+        if query and query.from_user:
+            logger.info(
+                f"username: {query.from_user.username} - pressed button: {query.data}"
+            )
+        message = update.callback_query.message if update.callback_query else None
         user_id = telegram_user_id
     else:
-        logger.info(
-            f"username: {update.message.from_user.username} "
-            f"- issued command: {update.message.text}"
-        )
-        message = update.message
-        user_id = update.message.from_user.id
+        user = update.effective_user
+        message = update.effective_message
+        if user:
+            logger.info(
+                f"username: {user.username} - issued command: {message.text if message else TOPS_COMMAND}"
+            )
+        user_id = user.id if user else None
 
         if context.args:
             entity_type, period = _parse_tops_args(context.args)
+
+    if not user_id or not message:
+        return
 
     view_service: ViewService = context.bot_data["view_service"]
     response, reply_markup = await view_service.build_tops_response(
@@ -352,18 +378,9 @@ async def tops(
     )
 
     if from_button:
-        await message.edit_text(
-            response,
-            reply_markup=reply_markup,
-            parse_mode=telegram.constants.ParseMode.HTML,
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
+        await message.edit_text(response, reply_markup=reply_markup)
     else:
-        await message.reply_html(
-            response,
-            reply_markup=reply_markup,
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
+        await message.reply_text(response, reply_markup=reply_markup)
 
 
 def _parse_tops_args(
@@ -408,14 +425,18 @@ def _parse_tops_args(
 @log_command(COLLAGE_COMMAND)
 async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generates a Last.fm collage image."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or COLLAGE_COMMAND}"
     )
-    user_id = update.message.from_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text(emojize(responses.user_not_found.substitute()))
+    user_id = user.id
+    db_user = db.get_user(user_id)
+    if not db_user:
+        await message.reply_text(emojize(responses.user_not_found.substitute()))
         return
 
     view_service: ViewService = context.bot_data["view_service"]
@@ -426,29 +447,32 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response, reply_markup = await view_service.build_collage_selection_response(
             user_id
         )
-        await update.message.reply_html(response, reply_markup=reply_markup)
+        await message.reply_text(response, reply_markup=reply_markup)
         return
 
     # Parse arguments
     try:
         entity, cols, rows, period = parse_collage_args(context.args)
     except ValueError as e:
-        await update.message.reply_text(f"⚠️ {e}")
+        await message.reply_text(f"⚠️ {e}")
         return
 
     size_str = f"{cols}x{rows}"
-    status_msg = await update.message.reply_text(
+    status_msg = await message.reply_text(
         f"🎨 Generating your {size_str} {entity} collage..."
     )
     if update.effective_chat:
-        await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id,
-            action=telegram.constants.ChatAction.UPLOAD_PHOTO,
-        )
+        try:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=telegram.constants.ChatAction.UPLOAD_PHOTO,
+            )
+        except Exception:
+            pass
 
     try:
         bio = await collage_service.generate_collage_image(
-            username=user.lastfm_username,
+            username=db_user.lastfm_username,
             entity=entity,
             cols=cols,
             rows=rows,
@@ -458,14 +482,12 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             entity_type=entity,
             size=size_str,
             period=period,
-            lastfm_username=user.lastfm_username,
+            lastfm_username=db_user.lastfm_username,
         )
-        await update.message.reply_photo(
-            photo=bio, caption=caption, parse_mode=telegram.constants.ParseMode.HTML
-        )
+        await message.reply_photo(photo=bio, caption=caption)
     except Exception as e:
         logger.exception(f"Error generating collage: {e}")
-        await update.message.reply_text(
+        await message.reply_text(
             emojize(responses.collage_error.substitute(error=str(e)))
         )
     finally:
@@ -478,15 +500,17 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @log_command(PREFERENCES_COMMAND)
 async def preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays user preferences options."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or PREFERENCES_COMMAND}"
     )
     view_service: ViewService = context.bot_data["view_service"]
-    response, reply_markup = await view_service.build_preferences_response(
-        update.message.from_user.id
-    )
-    await update.message.reply_html(response, reply_markup=reply_markup)
+    response, reply_markup = await view_service.build_preferences_response(user.id)
+    await message.reply_text(response, reply_markup=reply_markup)
 
 
 async def unlink_account(
@@ -496,6 +520,9 @@ async def unlink_account(
 ) -> None:
     """Unlinks a user's Last.fm account."""
     query = update.callback_query
+    if not query:
+        return
+
     user_id = telegram_user_id or query.from_user.id
     view_service: ViewService = context.bot_data["view_service"]
     response = view_service.build_preferences_unlink_account_response(user_id)
@@ -505,78 +532,105 @@ async def unlink_account(
 @log_command(HELP_COMMAND)
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shows the bot's description as help text."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or HELP_COMMAND}"
     )
     bot_description = (await context.bot.get_my_description()).description
-    await update.message.reply_text(emojize(bot_description))
+    await message.reply_text(emojize(bot_description))
 
 
 @log_command(CHANGELOG_COMMAND)
 async def changelog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays the changelog."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or CHANGELOG_COMMAND}"
     )
     view_service: ViewService = context.bot_data["view_service"]
     response = await view_service.build_changelog_response()
-    await update.message.reply_html(response)
+    await message.reply_text(response)
 
 
 @log_command(PRIVACY_COMMAND)
 async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays the privacy policy."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or PRIVACY_COMMAND}"
     )
     view_service: ViewService = context.bot_data["view_service"]
-    message = await view_service.build_privacy_response()
-    await update.message.reply_html(message)
+    message_text = await view_service.build_privacy_response()
+    await message.reply_text(message_text)
 
 
 @log_command(COMPARE_COMMAND)
 async def compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Compares listening stats between the user and another Last.fm user."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or COMPARE_COMMAND}"
     )
     if not context.args:
-        await update.message.reply_text(
+        await message.reply_text(
             "Please provide a Last.fm username. Usage: /compare <lastfm_username>"
         )
         return
 
     other_username = context.args[0]
     view_service: ViewService = context.bot_data["view_service"]
-    response = await view_service.build_compare_response(
-        update.message.from_user.id, other_username
-    )
-    await update.message.reply_html(response)
+    response = await view_service.build_compare_response(user.id, other_username)
+    await message.reply_text(response)
 
 
 @log_command(VIBE_COMMAND)
 async def vibe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generates an AI description of the user's current listening vibe."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or VIBE_COMMAND}"
     )
-    user_id = update.message.from_user.id
+    user_id = user.id
     lastfm_service = context.bot_data["view_service"].lastfm_service
 
     # Get recent tracks
     recent_tracks = lastfm_service.get_recent_tracks(user_id)
     if not recent_tracks:
-        await update.message.reply_text(
+        await message.reply_text(
             "Couldn't find your recent tracks. Make sure your Last.fm is set up with /set"
         )
         return
 
-    await update.message.reply_text("🎵 Analyzing your vibe...")
+    if update.effective_chat:
+        try:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=telegram.constants.ChatAction.TYPING,
+            )
+        except Exception:
+            pass
+
+    status_msg = await message.reply_text("🎵 Analyzing your vibe...")
 
     # Format tracks for AI
     track_list = [
@@ -585,20 +639,29 @@ async def vibe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     current = track_list[0] if track_list else None
 
     # Generate vibe
-    vibe_text = await ai.generate_vibe(track_list, current)
-    await update.message.reply_text(
-        f"🎧 *Your Vibe*\n\n{vibe_text}", parse_mode="Markdown"
-    )
+    try:
+        vibe_text = await ai.generate_vibe(track_list, current)
+        escaped_vibe = html.escape(vibe_text)
+        await message.reply_text(f"🎧 <b>Your Vibe</b>\n\n{escaped_vibe}")
+    finally:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
 
 
 @log_command(ROAST_COMMAND)
 async def roast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generates a humorous AI roast of the user's music taste."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or ROAST_COMMAND}"
     )
-    user_id = update.message.from_user.id
+    user_id = user.id
     lastfm_service = context.bot_data["view_service"].lastfm_service
 
     # Get top artists and tracks
@@ -610,12 +673,21 @@ async def roast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     if not top_artists:
-        await update.message.reply_text(
+        await message.reply_text(
             "Couldn't find your top artists. Make sure your Last.fm is set up with /set"
         )
         return
 
-    await update.message.reply_text("🔥 Preparing your roast...")
+    if update.effective_chat:
+        try:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=telegram.constants.ChatAction.TYPING,
+            )
+        except Exception:
+            pass
+
+    status_msg = await message.reply_text("🔥 Preparing your roast...")
 
     # Format for AI
     artists_list = [item.item.name for item in top_artists[:10]]
@@ -624,20 +696,29 @@ async def roast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
 
     # Generate roast
-    roast_text = await ai.generate_roast(artists_list, tracks_list)
-    await update.message.reply_text(
-        f"🎤 *Music Taste Roast*\n\n{roast_text}", parse_mode="Markdown"
-    )
+    try:
+        roast_text = await ai.generate_roast(artists_list, tracks_list)
+        escaped_roast = html.escape(roast_text)
+        await message.reply_text(f"🎤 <b>Music Taste Roast</b>\n\n{escaped_roast}")
+    finally:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
 
 
 @log_command(RECOMMEND_COMMAND)
 async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generates AI-powered music recommendations."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     logger.info(
-        f"username: {update.message.from_user.username} "
-        f"- issued command: {update.message.text}"
+        f"username: {user.username} - issued command: {message.text or RECOMMEND_COMMAND}"
     )
-    user_id = update.message.from_user.id
+    user_id = user.id
     lastfm_service = context.bot_data["view_service"].lastfm_service
 
     # Get top artists
@@ -646,18 +727,32 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     if not top_artists:
-        await update.message.reply_text(
+        await message.reply_text(
             "Couldn't find your top artists. Make sure your Last.fm is set up with /set"
         )
         return
 
-    await update.message.reply_text("🎵 Finding recommendations for you...")
+    if update.effective_chat:
+        try:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=telegram.constants.ChatAction.TYPING,
+            )
+        except Exception:
+            pass
+
+    status_msg = await message.reply_text("🎵 Finding recommendations for you...")
 
     # Format for AI
     artists_list = [item.item.name for item in top_artists[:10]]
 
     # Generate recommendations
-    rec_text = await ai.generate_recommendations(artists_list)
-    await update.message.reply_text(
-        f"💡 *Recommendations Based On Your Taste*\n\n{rec_text}", parse_mode="Markdown"
-    )
+    try:
+        rec_text = await ai.generate_recommendations(artists_list)
+        escaped_rec = html.escape(rec_text)
+        await message.reply_text(f"💡 <b>Recommendations Based On Your Taste</b>\n\n{escaped_rec}")
+    finally:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass

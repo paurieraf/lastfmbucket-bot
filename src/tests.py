@@ -2,13 +2,16 @@ import sys
 import unittest
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Ensure src is in sys.path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from PIL import Image
+from telegram import Chat as TgChat, Update, User as TgUser
 
+import bot
+import commands
 from callbacks import Action, Callback, Entity, Period
 from services import CollageService, ViewService, parse_collage_args
 
@@ -144,6 +147,91 @@ class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("period", msg.lower())
         self.assertIsNotNone(kb)
+
+
+class TestBotCoreAndLifecycle(unittest.IsolatedAsyncioTestCase):
+    def test_bot_commands_definition(self):
+        self.assertGreater(len(commands.BOT_COMMANDS), 5)
+        command_names = [cmd.command for cmd in commands.BOT_COMMANDS]
+        self.assertIn("np", command_names)
+        self.assertIn("status", command_names)
+        self.assertIn("tops", command_names)
+        self.assertIn("collage", command_names)
+        self.assertIn("vibe", command_names)
+        self.assertIn("roast", command_names)
+        self.assertIn("recommend", command_names)
+
+    async def test_post_init_registers_commands(self):
+        mock_app = MagicMock()
+        mock_app.bot.set_my_commands = AsyncMock()
+
+        await bot.post_init(mock_app)
+        mock_app.bot.set_my_commands.assert_awaited_once_with(commands.BOT_COMMANDS)
+
+    async def test_global_error_handler_sends_notification(self):
+        mock_context = MagicMock()
+        mock_context.error = ValueError("Test error message")
+        mock_context.bot.send_message = AsyncMock()
+
+        mock_update = MagicMock(spec=Update)
+        mock_chat = MagicMock(spec=TgChat)
+        mock_chat.id = 12345
+        mock_update.effective_chat = mock_chat
+
+        with patch("bot.config.SENTRY_DSN", "https://key@sentry.io/123"), patch(
+            "bot.sentry_sdk.capture_exception"
+        ) as mock_sentry:
+            await bot.error_handler(mock_update, mock_context)
+            mock_sentry.assert_called_once_with(mock_context.error)
+            mock_context.bot.send_message.assert_awaited_once_with(
+                chat_id=12345,
+                text="⚠️ An unexpected error occurred while processing your request. Please try again later.",
+            )
+
+
+class TestCommandDecoratorsAndHandlers(unittest.IsolatedAsyncioTestCase):
+    @patch("db.log_command")
+    async def test_log_command_decorator_with_effective_user(self, mock_db_log):
+        @commands.log_command("test_cmd")
+        async def dummy_handler(update, context):
+            return "ok"
+
+        mock_update = MagicMock(spec=Update)
+        mock_user = MagicMock(spec=TgUser)
+        mock_user.id = 999
+        mock_user.username = "test_user"
+        mock_chat = MagicMock(spec=TgChat)
+        mock_chat.id = 888
+        mock_chat.type = "private"
+        mock_chat.title = ""
+        mock_chat.username = "test_user"
+
+        mock_update.effective_user = mock_user
+        mock_update.effective_chat = mock_chat
+
+        mock_context = MagicMock()
+        mock_context.args = ["arg1", "arg2"]
+
+        result = await dummy_handler(mock_update, mock_context)
+        self.assertEqual(result, "ok")
+        mock_db_log.assert_called_once_with(
+            user_id=999,
+            username="test_user",
+            command="test_cmd",
+            args="arg1 arg2",
+            chat_id=888,
+            chat_type="private",
+            chat_name="test_user",
+        )
+
+    def test_tops_arg_parser_edge_cases(self):
+        entity, period = commands._parse_tops_args(["artists", "1month"])
+        self.assertEqual(entity, commands.lastfm.EntityType.ARTIST)
+        self.assertEqual(period, commands.lastfm.Period.ONE_MONTH)
+
+        entity, period = commands._parse_tops_args(["tracks", "overall"])
+        self.assertEqual(entity, commands.lastfm.EntityType.TRACK)
+        self.assertEqual(period, commands.lastfm.Period.OVERALL)
 
 
 if __name__ == "__main__":
