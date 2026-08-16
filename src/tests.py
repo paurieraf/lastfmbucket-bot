@@ -173,6 +173,22 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
 
 
 class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
+    def test_collage_caption(self):
+        caption = ViewService.build_collage_caption(
+            entity_type="album", size="10x10", period="7day", lastfm_username="testuser"
+        )
+        self.assertIn("(10x10, 1 week)", caption)
+        self.assertNotIn("px tiles", caption)
+
+        caption_with_tile = ViewService.build_collage_caption(
+            entity_type="artist",
+            size="3x3",
+            period="overall",
+            lastfm_username="testuser",
+            tile_size=150,
+        )
+        self.assertIn("(3x3, all time, 150px tiles)", caption_with_tile)
+
     async def test_interactive_selection_steps(self):
         mock_lastfm_service = MagicMock()
         view_service = ViewService(mock_lastfm_service)
@@ -234,9 +250,10 @@ class TestBotCoreAndLifecycle(unittest.IsolatedAsyncioTestCase):
         mock_chat.id = 12345
         mock_update.effective_chat = mock_chat
 
-        with patch("bot.config.SENTRY_DSN", "https://key@sentry.io/123"), patch(
-            "bot.sentry_sdk.capture_exception"
-        ) as mock_sentry:
+        with (
+            patch("bot.config.SENTRY_DSN", "https://key@sentry.io/123"),
+            patch("bot.sentry_sdk.capture_exception") as mock_sentry,
+        ):
             await bot.error_handler(mock_update, mock_context)
             mock_sentry.assert_called_once_with(mock_context.error)
             mock_context.bot.send_message.assert_awaited_once_with(

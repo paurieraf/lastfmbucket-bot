@@ -487,6 +487,7 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             size=size_str,
             period=period,
             lastfm_username=db_user.lastfm_username,
+            tile_size=tile_size,
         )
         await message.reply_photo(photo=bio, caption=caption)
     except Exception as e:

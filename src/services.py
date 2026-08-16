@@ -511,7 +511,11 @@ class ViewService:
 
     @staticmethod
     def build_collage_caption(
-        entity_type: str, size: str, period: str, lastfm_username: str
+        entity_type: str,
+        size: str,
+        period: str,
+        lastfm_username: str,
+        tile_size: Optional[int] = None,
     ) -> str:
         """Builds the caption HTML string for a generated collage."""
         period_display_map = {
@@ -523,10 +527,12 @@ class ViewService:
             "overall": "all time",
         }
         period_label = period_display_map.get(period, period)
+        tile_note = f", {tile_size}px tiles" if tile_size else ""
         return responses.collage_caption.substitute(
             entity_type=entity_type.capitalize(),
             size=size,
             period=period_label,
+            tile_note=tile_note,
             lastfm_username=lastfm_username,
         )
 
@@ -647,6 +653,12 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[in
     period = "7day"
     tile_size: Optional[int] = None
 
+    max_cols = CollageGenerator.MAX_COLS
+    max_rows = CollageGenerator.MAX_ROWS
+    max_tiles = CollageGenerator.MAX_TILES
+    min_tile = CollageGenerator.MIN_TILE_SIZE
+    max_tile = CollageGenerator.MAX_TILE_SIZE
+
     entity_aliases = {
         "album": "album",
         "albums": "album",
@@ -704,36 +716,38 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[in
             period = period_aliases[clean]
         elif m := tile_size_pattern.match(clean):
             ts = int(m.group(1))
-            if not (50 <= ts <= 600):
+            if not (min_tile <= ts <= max_tile):
                 raise ValueError(
-                    f"Tile size must be between 50 and 600 pixels, got {ts}"
+                    f"Tile size must be between {min_tile} and {max_tile} pixels, got {ts}"
                 )
             tile_size = ts
         elif m := tile_size_px_pattern.match(clean):
             ts = int(m.group(1))
-            if not (50 <= ts <= 600):
+            if not (min_tile <= ts <= max_tile):
                 raise ValueError(
-                    f"Tile size must be between 50 and 600 pixels, got {ts}"
+                    f"Tile size must be between {min_tile} and {max_tile} pixels, got {ts}"
                 )
             tile_size = ts
         elif m := dim_pattern.match(clean):
             c, r = int(m.group(1)), int(m.group(2))
-            if not (1 <= c <= 20 and 1 <= r <= 20):
+            if not (1 <= c <= max_cols and 1 <= r <= max_rows):
                 raise ValueError(
-                    f"Collage dimensions must be between 1x1 and 20x20, got {c}x{r}"
+                    f"Collage dimensions must be between 1x1 and {max_cols}x{max_rows}, got {c}x{r}"
                 )
-            if (c * r) > 400:
+            if (c * r) > max_tiles:
                 raise ValueError(
-                    f"Total tile count ({c * r}) exceeds maximum capacity of 400 tiles."
+                    f"Total tile count ({c * r}) exceeds maximum capacity of {max_tiles} tiles."
                 )
             cols, rows = c, r
         elif m := single_dim_pattern.match(clean):
             d = int(m.group(1))
-            if not (1 <= d <= 20):
-                raise ValueError(f"Collage dimension must be between 1 and 20, got {d}")
-            if (d * d) > 400:
+            if not (1 <= d <= max_cols):
                 raise ValueError(
-                    f"Total tile count ({d * d}) exceeds maximum capacity of 400 tiles."
+                    f"Collage dimension must be between 1 and {max_cols}, got {d}"
+                )
+            if (d * d) > max_tiles:
+                raise ValueError(
+                    f"Total tile count ({d * d}) exceeds maximum capacity of {max_tiles} tiles."
                 )
             cols, rows = d, d
         else:
