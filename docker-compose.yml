@@ -26,9 +26,8 @@ services:
     image: ollama/ollama:latest
     container_name: lastfmbucket-ollama
     restart: unless-stopped
-    # Descomentar si s'habilita el passthrough de la GPU Intel UHD 630 a l'LXC 101 (/dev/dri):
-    # devices:
-    #   - /dev/dri:/dev/dri
+    devices:
+      - /dev/dri:/dev/dri
     volumes:
       - ollama_data:/root/.ollama
     environment:
