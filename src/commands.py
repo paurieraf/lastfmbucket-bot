@@ -4,6 +4,7 @@ Telegram bot command handlers.
 This module contains handlers for commands and callback queries.
 """
 
+import asyncio
 import functools
 import html
 import logging
@@ -28,6 +29,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+COLLAGE_SEMAPHORE = asyncio.Semaphore(2)
 
 
 def log_command(command_name: str) -> Callable:
@@ -170,13 +173,14 @@ async def _handle_collage(
                 pass
 
         try:
-            bio = await collage_service.generate_collage_image(
-                username=user.lastfm_username,
-                entity=entity_str,
-                cols=cols,
-                rows=rows,
-                period=period_str,
-            )
+            async with COLLAGE_SEMAPHORE:
+                bio = await collage_service.generate_collage_image(
+                    username=user.lastfm_username,
+                    entity=entity_str,
+                    cols=cols,
+                    rows=rows,
+                    period=period_str,
+                )
             caption = view_service.build_collage_caption(
                 entity_type=entity_str,
                 size=size_str,
@@ -254,9 +258,7 @@ async def now_playing(
 ) -> None:
     """Fetches and displays the user's currently playing track."""
     from_button = update.callback_query is not None
-    message = (
-        update.callback_query.message if from_button else update.effective_message
-    )
+    message = update.callback_query.message if from_button else update.effective_message
     user_id = telegram_user_id or (
         update.effective_user.id if update.effective_user else None
     )
@@ -295,7 +297,9 @@ async def lastfm_username_set(
         f"username: {user.username} - issued command: {message.text or SET_COMMAND}"
     )
     if not context.args:
-        await message.reply_text("Please provide a Last.fm username. Usage: /set <username>")
+        await message.reply_text(
+            "Please provide a Last.fm username. Usage: /set <username>"
+        )
         return
 
     lastfm_username = context.args[0]
@@ -315,9 +319,7 @@ async def status(
 ) -> None:
     """Fetches and displays the user's recent tracks."""
     from_button = update.callback_query is not None
-    message = (
-        update.callback_query.message if from_button else update.effective_message
-    )
+    message = update.callback_query.message if from_button else update.effective_message
     user_id = telegram_user_id or (
         update.effective_user.id if update.effective_user else None
     )
@@ -471,14 +473,15 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
     try:
-        bio = await collage_service.generate_collage_image(
-            username=db_user.lastfm_username,
-            entity=entity,
-            cols=cols,
-            rows=rows,
-            period=period,
-            tile_size=tile_size,
-        )
+        async with COLLAGE_SEMAPHORE:
+            bio = await collage_service.generate_collage_image(
+                username=db_user.lastfm_username,
+                entity=entity,
+                cols=cols,
+                rows=rows,
+                period=period,
+                tile_size=tile_size,
+            )
         caption = view_service.build_collage_caption(
             entity_type=entity,
             size=size_str,
@@ -615,7 +618,7 @@ async def vibe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lastfm_service = context.bot_data["view_service"].lastfm_service
 
     # Get recent tracks
-    recent_tracks = lastfm_service.get_recent_tracks(user_id)
+    recent_tracks = await lastfm_service.get_recent_tracks(user_id)
     if not recent_tracks:
         await message.reply_text(
             "Couldn't find your recent tracks. Make sure your Last.fm is set up with /set"
@@ -666,11 +669,13 @@ async def roast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lastfm_service = context.bot_data["view_service"].lastfm_service
 
     # Get top artists and tracks
-    top_artists = lastfm_service.get_tops(
-        user_id, lastfm.EntityType.ARTIST, lastfm.Period.OVERALL
-    )
-    top_tracks = lastfm_service.get_tops(
-        user_id, lastfm.EntityType.TRACK, lastfm.Period.OVERALL
+    top_artists, top_tracks = await asyncio.gather(
+        lastfm_service.get_tops(
+            user_id, lastfm.EntityType.ARTIST, lastfm.Period.OVERALL
+        ),
+        lastfm_service.get_tops(
+            user_id, lastfm.EntityType.TRACK, lastfm.Period.OVERALL
+        ),
     )
 
     if not top_artists:
@@ -723,7 +728,7 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lastfm_service = context.bot_data["view_service"].lastfm_service
 
     # Get top artists
-    top_artists = lastfm_service.get_tops(
+    top_artists = await lastfm_service.get_tops(
         user_id, lastfm.EntityType.ARTIST, lastfm.Period.OVERALL
     )
 
@@ -751,7 +756,9 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         rec_text = await ai.generate_recommendations(artists_list)
         escaped_rec = html.escape(rec_text)
-        await message.reply_text(f"💡 <b>Recommendations Based On Your Taste</b>\n\n{escaped_rec}")
+        await message.reply_text(
+            f"💡 <b>Recommendations Based On Your Taste</b>\n\n{escaped_rec}"
+        )
     finally:
         try:
             await status_msg.delete()

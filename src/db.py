@@ -22,6 +22,7 @@ db = SqliteExtDatabase(
         "foreign_keys": 1,  # Enforce foreign-key constraints
         "ignore_check_constraints": 0,  # Enforce CHECK constraints
         "synchronous": 0,  # Let the OS manage syncing.
+        "busy_timeout": 5000,  # Wait up to 5s on lock contention (admin process shares DB).
     },
 )
 
@@ -174,7 +175,9 @@ def get_or_create_chat(
             telegram_id=telegram_chat_id,
             defaults={"telegram_chat_name": chat_name, "chat_type": chat_type},
         )
-        if not created and (chat.telegram_chat_name != chat_name or chat.chat_type != chat_type):
+        if not created and (
+            chat.telegram_chat_name != chat_name or chat.chat_type != chat_type
+        ):
             chat.telegram_chat_name = chat_name
             chat.chat_type = chat_type
             chat.save()

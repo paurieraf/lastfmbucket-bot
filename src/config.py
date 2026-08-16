@@ -23,6 +23,7 @@ Path(DB_SQLITE_NAME).parent.mkdir(parents=True, exist_ok=True)
 ## Last.fm
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
 LASTFM_API_SECRET = os.getenv("LASTFM_API_SECRET")
+LASTFM_MAX_CONCURRENT = int(os.getenv("LASTFM_MAX_CONCURRENT", "8"))
 
 ## Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")

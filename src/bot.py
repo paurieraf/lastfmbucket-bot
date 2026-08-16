@@ -12,6 +12,7 @@ from telegram.ext import (
     Defaults,
 )
 
+import ai
 import commands
 import config
 from lastfm import LastfmClient
@@ -29,6 +30,9 @@ async def post_init(application: Application) -> None:
     """Post-initialization callback to register bot commands."""
     await application.bot.set_my_commands(commands.BOT_COMMANDS)
     logger.info("Bot commands successfully registered with Telegram API.")
+
+    model_ready = await ai.ensure_model_exists()
+    logger.info(f"Ollama model readiness check: {model_ready}")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -50,10 +54,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     """Starts the bot."""
-    sentry_sdk.init(
-        dsn=config.SENTRY_DSN,
-        send_default_pii=True,
-    )
+    sentry_sdk.init(dsn=config.SENTRY_DSN, send_default_pii=True)
 
     defaults = Defaults(
         parse_mode=constants.ParseMode.HTML,
@@ -64,6 +65,7 @@ def main() -> None:
         ApplicationBuilder()
         .token(config.TELEGRAM_BOT_TOKEN)
         .defaults(defaults)
+        .concurrent_updates(True)
         .post_init(post_init)
         .build()
     )

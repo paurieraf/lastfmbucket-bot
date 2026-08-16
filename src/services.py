@@ -3,7 +3,7 @@ import datetime
 import logging
 import re
 from io import BytesIO
-from typing import Optional
+from typing import Callable, Optional
 
 import humanize
 import pylast
@@ -30,6 +30,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+LASTFM_SEMAPHORE = asyncio.Semaphore(config.LASTFM_MAX_CONCURRENT)
+
+
+async def _run_lastfm_call(func: Callable, *args, **kwargs):
+    """Run a blocking Last.fm call off the event loop, bounded by a semaphore."""
+    async with LASTFM_SEMAPHORE:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
 
 class LastfmService:
     """
@@ -43,10 +51,12 @@ class LastfmService:
     def __init__(self, lastfm_client: LastfmClient):
         self._lastfm_client = lastfm_client
 
-    def set_lastfm_username(
+    async def set_lastfm_username(
         self, telegram_user_id: int, telegram_username: str, lastfm_username: str
     ) -> tuple[db.User | None, bool]:
-        lastfm_user = self._lastfm_client.get_user(lastfm_username)
+        lastfm_user = await _run_lastfm_call(
+            self._lastfm_client.get_user, lastfm_username
+        )
         if not lastfm_user:
             return None, False
 
@@ -57,29 +67,33 @@ class LastfmService:
         )
         return user, True
 
-    def get_now_playing(
+    async def get_now_playing(
         self, telegram_user_id: int
     ) -> tuple[db.User | None, pylast.Track | None]:
         user = db.get_user(telegram_user_id)
         if not user:
             return None, None
 
-        now_playing_track = self._lastfm_client.get_now_playing(user.lastfm_username)
+        now_playing_track = await _run_lastfm_call(
+            self._lastfm_client.get_now_playing, user.lastfm_username
+        )
         return user, now_playing_track
 
-    def get_recent_tracks(
+    async def get_recent_tracks(
         self, telegram_user_id: int
     ) -> list[pylast.PlayedTrack] | None:
         user = db.get_user(telegram_user_id)
         if not user:
             return None
 
-        recent_tracks = self._lastfm_client.get_recent_tracks(
-            user.lastfm_username, limit=self.STATUS_LIMIT
+        recent_tracks = await _run_lastfm_call(
+            self._lastfm_client.get_recent_tracks,
+            user.lastfm_username,
+            limit=self.STATUS_LIMIT,
         )
         return recent_tracks
 
-    def get_tops(
+    async def get_tops(
         self,
         telegram_user_id: int,
         entity_type: EntityType,
@@ -94,20 +108,42 @@ class LastfmService:
             self.TOPS_DEFAULT_LIMIT if not extended_limit else self.TOPS_EXTENDED_LIMIT
         )
         if entity_type == EntityType.ARTIST:
-            tops = self._lastfm_client.client.get_user(
-                user.lastfm_username
-            ).get_top_artists(period=period, limit=limit)
+            tops = await _run_lastfm_call(
+                self._lastfm_client.client.get_user(
+                    user.lastfm_username
+                ).get_top_artists,
+                period=period,
+                limit=limit,
+            )
         elif entity_type == EntityType.ALBUM:
-            tops = self._lastfm_client.client.get_user(
-                user.lastfm_username
-            ).get_top_albums(period=period, limit=limit)
+            tops = await _run_lastfm_call(
+                self._lastfm_client.client.get_user(
+                    user.lastfm_username
+                ).get_top_albums,
+                period=period,
+                limit=limit,
+            )
         elif entity_type == EntityType.TRACK:
-            tops = self._lastfm_client.client.get_user(
-                user.lastfm_username
-            ).get_top_tracks(period=period, limit=limit)
+            tops = await _run_lastfm_call(
+                self._lastfm_client.client.get_user(
+                    user.lastfm_username
+                ).get_top_tracks,
+                period=period,
+                limit=limit,
+            )
         else:
             tops = None
         return tops
+
+    async def get_user_stats(self, username: str) -> dict | None:
+        return await _run_lastfm_call(self._lastfm_client.get_user_stats, username)
+
+    async def get_common_artists(
+        self, username1: str, username2: str, limit: int = 50
+    ) -> list[dict]:
+        return await _run_lastfm_call(
+            self._lastfm_client.get_common_artists, username1, username2, limit
+        )
 
     @staticmethod
     def unlink_user(telegram_user_id: int):
@@ -138,7 +174,7 @@ class ViewService:
     async def build_np_response(
         self, telegram_user_id: int, show_cover: bool = False
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
-        user, track = self.lastfm_service.get_now_playing(telegram_user_id)
+        user, track = await self.lastfm_service.get_now_playing(telegram_user_id)
         if not user:
             logging.warning(
                 f"User with telegram_id {telegram_user_id} not found in the database"
@@ -189,7 +225,7 @@ class ViewService:
     async def build_lastfm_username_set_response(
         self, telegram_user: telegram.User, lastfm_username: str
     ) -> str:
-        user, lastfm_user_exists = self.lastfm_service.set_lastfm_username(
+        user, lastfm_user_exists = await self.lastfm_service.set_lastfm_username(
             telegram_user_id=telegram_user.id,
             telegram_username=telegram_user.username,
             lastfm_username=lastfm_username,
@@ -209,7 +245,7 @@ class ViewService:
     async def build_status_response(
         self, telegram_user_id: int, show_cover: bool = False
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
-        recent_tracks = self.lastfm_service.get_recent_tracks(telegram_user_id)
+        recent_tracks = await self.lastfm_service.get_recent_tracks(telegram_user_id)
         user = db.get_user(telegram_user_id)
         if not recent_tracks or not user:
             response = responses.user_not_found.substitute()
@@ -341,7 +377,7 @@ class ViewService:
                 responses.tops_choose_period.substitute(entity_type=entity_type)
             ), reply_markup
 
-        tops = self.lastfm_service.get_tops(telegram_user_id, entity_type, period)
+        tops = await self.lastfm_service.get_tops(telegram_user_id, entity_type, period)
         user = db.get_user(telegram_user_id)
         if not tops:
             return emojize(
@@ -425,11 +461,12 @@ class ViewService:
         if not user:
             return emojize(responses.compare_no_lastfm_set.substitute())
 
-        my_stats = self.lastfm_service._lastfm_client.get_user_stats(
-            user.lastfm_username
-        )
-        other_stats = self.lastfm_service._lastfm_client.get_user_stats(
-            other_lastfm_username
+        my_stats, other_stats, common_artists = await asyncio.gather(
+            self.lastfm_service.get_user_stats(user.lastfm_username),
+            self.lastfm_service.get_user_stats(other_lastfm_username),
+            self.lastfm_service.get_common_artists(
+                user.lastfm_username, other_lastfm_username
+            ),
         )
 
         if not my_stats:
@@ -444,10 +481,6 @@ class ViewService:
                     username=other_lastfm_username
                 )
             )
-
-        common_artists = self.lastfm_service._lastfm_client.get_common_artists(
-            user.lastfm_username, other_lastfm_username
-        )
 
         if common_artists:
             common_artists_text = "\n".join(
@@ -603,9 +636,7 @@ class ViewService:
         return "", None
 
 
-def parse_collage_args(
-    args: list[str],
-) -> tuple[str, int, int, str, Optional[int]]:
+def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[int]]:
     """
     Parses CLI arguments for collage command.
     Returns (entity, cols, rows, period, tile_size).

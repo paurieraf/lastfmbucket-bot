@@ -6,6 +6,7 @@ Uses qwen2.5:0.5b - a tiny but capable model optimized for 2GB RAM.
 
 import logging
 import os
+import time
 
 import ollama
 
@@ -20,9 +21,14 @@ MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 # Initialize Ollama async client
 client = ollama.AsyncClient(host=OLLAMA_HOST)
 
+_MODEL_READY = False
+_LAST_MODEL_CHECK = 0.0
+_MODEL_CHECK_COOLDOWN = 60.0
+
 
 async def ensure_model_exists() -> bool:
     """Pull the model if it doesn't exist. Returns True if ready."""
+    global _MODEL_READY, _LAST_MODEL_CHECK
     try:
         models = await client.list()
         model_names = [m.model for m in models.models] if models.models else []
@@ -30,15 +36,30 @@ async def ensure_model_exists() -> bool:
             logger.info(f"Pulling model {MODEL_NAME}...")
             await client.pull(MODEL_NAME)
             logger.info(f"Model {MODEL_NAME} pulled successfully")
+        _MODEL_READY = True
         return True
     except Exception as e:
+        _MODEL_READY = False
         logger.error(f"Failed to ensure model exists: {e}")
         return False
+    finally:
+        _LAST_MODEL_CHECK = time.time()
 
 
-async def generate_vibe(recent_tracks: list[str], current_track: str | None = None) -> str:
+async def _model_available() -> bool:
+    """Check model readiness, retrying lazily at most once per cooldown period."""
+    if _MODEL_READY:
+        return True
+    if time.time() - _LAST_MODEL_CHECK >= _MODEL_CHECK_COOLDOWN:
+        return await ensure_model_exists()
+    return False
+
+
+async def generate_vibe(
+    recent_tracks: list[str], current_track: str | None = None
+) -> str:
     """Generate a vibe/mood description based on recent listening."""
-    if not await ensure_model_exists():
+    if not await _model_available():
         return "AI is temporarily unavailable. Please try again later."
 
     tracks_text = "\n".join(f"- {track}" for track in recent_tracks[:10])
@@ -55,11 +76,7 @@ Describe the vibe:"""
         response = await client.generate(
             model=MODEL_NAME,
             prompt=prompt,
-            options={
-                "temperature": 0.8,
-                "num_predict": 80,
-                "num_ctx": 1024,
-            },
+            options={"temperature": 0.8, "num_predict": 80, "num_ctx": 1024},
         )
         return response.response.strip()
     except Exception as e:
@@ -69,7 +86,7 @@ Describe the vibe:"""
 
 async def generate_roast(top_artists: list[str], top_tracks: list[str]) -> str:
     """Generate a humorous roast of the user's music taste."""
-    if not await ensure_model_exists():
+    if not await _model_available():
         return "AI is temporarily unavailable. Please try again later."
 
     artists_text = ", ".join(top_artists[:10])
@@ -86,11 +103,7 @@ Your roast:"""
         response = await client.generate(
             model=MODEL_NAME,
             prompt=prompt,
-            options={
-                "temperature": 0.9,
-                "num_predict": 80,
-                "num_ctx": 1024,
-            },
+            options={"temperature": 0.9, "num_predict": 80, "num_ctx": 1024},
         )
         return response.response.strip()
     except Exception as e:
@@ -100,7 +113,7 @@ Your roast:"""
 
 async def generate_recommendations(top_artists: list[str]) -> str:
     """Generate music recommendations based on top artists."""
-    if not await ensure_model_exists():
+    if not await _model_available():
         return "AI is temporarily unavailable. Please try again later."
 
     artists_text = ", ".join(top_artists[:10])
@@ -115,11 +128,7 @@ Recommendations:"""
         response = await client.generate(
             model=MODEL_NAME,
             prompt=prompt,
-            options={
-                "temperature": 0.7,
-                "num_predict": 120,
-                "num_ctx": 1024,
-            },
+            options={"temperature": 0.7, "num_predict": 120, "num_ctx": 1024},
         )
         return response.response.strip()
     except Exception as e:
