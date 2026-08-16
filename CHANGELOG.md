@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Upgraded `lastfmcollagegenerator` to v0.8.0 and exposed its new rendering options in `/collage`.
+- New `/collage` CLI options: `theme:`, `overlay:`, `preset:` (short aliases `story|post|header|wallpaper|4k`), `notext`, `corner:`, `border:`, `border_color:`, `spacing:`, `fallback:`.
+- New interactive style step (themes, overlays, Skip) and social preset buttons in the collage builder.
+- Persistent artwork cache under `data/collage_cache/` (kept in the Docker volume).
+
 ## [0.2.0] - 2026-08-17
 
 ### Added

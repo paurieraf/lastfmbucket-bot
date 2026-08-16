@@ -22,6 +22,14 @@ if TYPE_CHECKING:
 SEP = "|"
 VERSION = "1"
 
+PRESET_ALIASES = {
+    "story": "instagram-story",
+    "post": "instagram-post",
+    "header": "twitter-header",
+    "wallpaper": "desktop-wallpaper",
+    "4k": "desktop-wallpaper-4k",
+}
+
 
 class Action(StrEnum):
     """Short codes for callback actions."""
@@ -70,6 +78,10 @@ class Callback:
     entity: Optional[Entity] = None
     period: Optional[Period] = None
     size: Optional[str] = None
+    theme: Optional[str] = None
+    overlay: Optional[str] = None
+    preset: Optional[str] = None
+    style: Optional[str] = None
 
     def encode(self) -> str:
         """Encode to compact string format for Telegram callback_data."""
@@ -80,6 +92,10 @@ class Callback:
             self.entity or "",
             self.period or "",
             self.size or "",
+            self.theme or "",
+            self.overlay or "",
+            self.preset or "",
+            self.style or "",
         ]
         encoded = SEP.join(parts)
         assert len(encoded.encode("utf-8")) <= 64, f"Callback too long: {encoded}"
@@ -102,6 +118,10 @@ class Callback:
             entity = Entity(parts[3]) if len(parts) > 3 and parts[3] else None
             period = Period(parts[4]) if len(parts) > 4 and parts[4] else None
             size = parts[5] if len(parts) > 5 and parts[5] else None
+            theme = parts[6] if len(parts) > 6 and parts[6] else None
+            overlay = parts[7] if len(parts) > 7 and parts[7] else None
+            preset = parts[8] if len(parts) > 8 and parts[8] else None
+            style = parts[9] if len(parts) > 9 and parts[9] else None
 
             return cls(
                 action=action,
@@ -109,6 +129,10 @@ class Callback:
                 entity=entity,
                 period=period,
                 size=size,
+                theme=theme,
+                overlay=overlay,
+                preset=preset,
+                style=style,
             )
         except (ValueError, IndexError):
             return None
@@ -162,6 +186,12 @@ class Callback:
             Period.OVERALL: "overall",
         }
         return mapping.get(self.period, "7day") if self.period else "7day"
+
+    def to_collage_preset_str(self) -> Optional[str]:
+        """Convert callback preset short code to full collage preset name."""
+        if not self.preset:
+            return None
+        return PRESET_ALIASES.get(self.preset, self.preset)
 
 
 def entity_from_lastfm(entity_type: lastfm.EntityType) -> Entity:

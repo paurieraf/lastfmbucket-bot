@@ -58,7 +58,7 @@ lastfmbucket-bot/
 | `/np` | None | `commands.now_playing` | Displays currently playing track with interactive action buttons. | HTML + Buttons (`More info`, `🖼️ Cover`) |
 | `/status` | None | `commands.status` | Displays recent 5 scrobbled tracks with relative time deltas (`humanize`). | HTML + Buttons (`Less info`, `🖼️ Cover`) |
 | `/tops` | `[entity] [period]` *(optional)* | `commands.tops` | Shows top artists, albums, or tracks over 7d, 1m, 3m, 6m, 1y, or overall. | HTML List (Top 10) or 2-Tier Keyboard |
-| `/collage` | `[size] [period] [entity] [tile_size]` *(optional)* | `commands.collage` | Generates a composite visual image grid (1x1 to 20x20, max 400 tiles, dynamic resolution scaling) using `lastfmcollagegenerator`. | Photo with caption or 3-Tier Keyboard |
+| `/collage` | `[size] [period] [entity] [tile_size] [theme:..] [overlay:..] [preset:..] [notext] [corner:..] [border:..] [border_color:..] [spacing:..] [fallback:..]` *(optional)* | `commands.collage` | Generates a composite visual image grid (1x1 to 20x20, max 400 tiles, dynamic resolution scaling) using `lastfmcollagegenerator` v0.8.0, with themes, overlays, social presets, tile geometry and a persistent artwork cache (`data/collage_cache/`). | Photo with caption or 4-Tier Keyboard (entity → size/preset → period → style) |
 | `/compare` | `<target_user>` | `commands.compare` | Compares total scrobbles, top 3 artists, and common artists with another user. | HTML summary table |
 | `/preferences`| None | `commands.preferences` | Displays account settings and an inline `Unlink your account` button. | HTML + Button |
 | `/help` | None | `commands.help_command` | Fetches bot description dynamically from Telegram API. | Plain text |

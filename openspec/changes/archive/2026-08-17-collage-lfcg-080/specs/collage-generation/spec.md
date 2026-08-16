@@ -1,8 +1,5 @@
-# collage-generation Specification
+## MODIFIED Requirements
 
-## Purpose
-Permetre als usuaris de Telegram generar i rebre graelles visuals (collages) dels seus elements més escoltats a Last.fm (àlbums, artistes i cançons) en diversos períodes temporals i mides.
-## Requirements
 ### Requirement: Collage generation command
 El bot SHALL proporcionar una comanda `/collage` que permeti als usuaris generar collages gràfics dels seus tops musicals de Last.fm, amb opcions de renderitzat (tema, overlay, preset, geometria de caselles, amagat de text i estil de fallback).
 

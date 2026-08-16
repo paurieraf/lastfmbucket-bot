@@ -1,7 +1,9 @@
 import asyncio
 import datetime
 import logging
+import os
 import re
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Callable, Optional
 
@@ -11,12 +13,21 @@ import telegram
 from emoji import emojize
 from telegram import InlineKeyboardButton
 from lastfmcollagegenerator.collage_generator import CollageGenerator
+from lastfmcollagegenerator.constants import (
+    OVERLAY_BANNER,
+    OVERLAY_STYLES,
+    THEME_DARK,
+    THEMES,
+)
+from lastfmcollagegenerator.fallback_art import FALLBACK_STYLE_GRADIENT, FALLBACK_STYLES
+from lastfmcollagegenerator.presets import PRESET_NAMES, SOCIAL_PRESETS
 
 import config
 import db
 import lastfm
 import responses
 from callbacks import (
+    PRESET_ALIASES,
     Action,
     Callback,
     Entity,
@@ -516,6 +527,10 @@ class ViewService:
         period: str,
         lastfm_username: str,
         tile_size: Optional[int] = None,
+        theme: Optional[str] = None,
+        overlay_style: Optional[str] = None,
+        preset: Optional[str] = None,
+        show_text: bool = True,
     ) -> str:
         """Builds the caption HTML string for a generated collage."""
         period_display_map = {
@@ -528,11 +543,27 @@ class ViewService:
         }
         period_label = period_display_map.get(period, period)
         tile_note = f", {tile_size}px tiles" if tile_size else ""
+        if preset and preset in SOCIAL_PRESETS:
+            sp = SOCIAL_PRESETS[preset]
+            size_display = f"{preset} {sp.cols}x{sp.rows}"
+        else:
+            size_display = size
+
+        style_parts: list[str] = []
+        if theme and theme != "dark":
+            style_parts.append(theme)
+        if overlay_style and overlay_style != "banner":
+            style_parts.append(overlay_style.replace("_", " "))
+        if not show_text:
+            style_parts.append("sense text")
+        style_note = f", {', '.join(style_parts)}" if style_parts else ""
+
         return responses.collage_caption.substitute(
             entity_type=entity_type.capitalize(),
-            size=size,
+            size=size_display,
             period=period_label,
             tile_note=tile_note,
+            style_note=style_note,
             lastfm_username=lastfm_username,
         )
 
@@ -542,6 +573,10 @@ class ViewService:
         entity: Optional[Entity] = None,
         size: Optional[str] = None,
         period: Optional[CallbackPeriod] = None,
+        preset: Optional[str] = None,
+        theme: Optional[str] = None,
+        overlay: Optional[str] = None,
+        style: Optional[str] = None,
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None]:
         """
         Builds an interactive selection interface for collage parameters.
@@ -575,7 +610,7 @@ class ViewService:
                 responses.collage_choose_entity_type.substitute()
             ), reply_markup
 
-        if not size:
+        if not size and not preset:
             presets = [["3x3", "4x4", "5x5"], ["3x5", "10x5", "10x10"]]
             keyboard = [
                 [
@@ -589,6 +624,24 @@ class ViewService:
                 ]
                 for row in presets
             ]
+            social_presets = [
+                ("story", "📱 Story"),
+                ("post", "📸 Post"),
+                ("header", "🖼️ Header"),
+                ("wallpaper", "🖥️ Wallpaper"),
+                ("4k", "🖥️ 4K"),
+            ]
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        label,
+                        callback_data=Callback(
+                            Action.COLLAGE, telegram_user_id, entity=entity, preset=code
+                        ).encode(),
+                    )
+                    for code, label in social_presets
+                ]
+            )
             entity_name = entity.name.lower()
             reply_markup = telegram.InlineKeyboardMarkup(keyboard)
             return (
@@ -619,6 +672,7 @@ class ViewService:
                             entity=entity,
                             size=size,
                             period=cb_period,
+                            preset=preset,
                         ).encode(),
                     )
                 )
@@ -629,11 +683,96 @@ class ViewService:
                 keyboard.append(row)
 
             entity_name = entity.name.lower()
+            size_label = PRESET_ALIASES.get(preset, preset) if preset else (size or "")
             reply_markup = telegram.InlineKeyboardMarkup(keyboard)
             return (
                 emojize(
                     responses.collage_choose_period.substitute(
-                        size=size, entity_type=entity_name
+                        size=size_label, entity_type=entity_name
+                    )
+                ),
+                reply_markup,
+            )
+
+        if style != "skip":
+            theme_options = [
+                ("dark", "Dark"),
+                ("light", "Light"),
+                ("glassmorphic", "Glass"),
+                ("sunset", "Sunset"),
+                ("neon", "Neon"),
+            ]
+            overlay_options = [
+                ("banner", "Banner"),
+                ("full_tint", "Full tint"),
+                ("gradient", "Gradient"),
+                ("pill", "Pill"),
+                ("clean", "Clean"),
+            ]
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        label,
+                        callback_data=Callback(
+                            Action.COLLAGE,
+                            telegram_user_id,
+                            entity=entity,
+                            size=size,
+                            period=period,
+                            preset=preset,
+                            theme=code,
+                            overlay=overlay,
+                            style="set",
+                        ).encode(),
+                    )
+                    for code, label in theme_options
+                ],
+                [
+                    InlineKeyboardButton(
+                        label,
+                        callback_data=Callback(
+                            Action.COLLAGE,
+                            telegram_user_id,
+                            entity=entity,
+                            size=size,
+                            period=period,
+                            preset=preset,
+                            theme=theme,
+                            overlay=code,
+                            style="set",
+                        ).encode(),
+                    )
+                    for code, label in overlay_options
+                ],
+                [
+                    InlineKeyboardButton(
+                        "✨ Skip",
+                        callback_data=Callback(
+                            Action.COLLAGE,
+                            telegram_user_id,
+                            entity=entity,
+                            size=size,
+                            period=period,
+                            preset=preset,
+                            theme=theme,
+                            overlay=overlay,
+                            style="skip",
+                        ).encode(),
+                    )
+                ],
+            ]
+            entity_name = entity.name.lower()
+            size_label = PRESET_ALIASES.get(preset, preset) if preset else (size or "")
+            current_style = " / ".join(
+                filter(None, [theme or "dark", overlay or "banner"])
+            )
+            reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+            return (
+                emojize(
+                    responses.collage_choose_style.substitute(
+                        size=size_label,
+                        entity_type=entity_name,
+                        current_style=f"Current: {current_style}",
                     )
                 ),
                 reply_markup,
@@ -642,16 +781,61 @@ class ViewService:
         return "", None
 
 
-def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[int]]:
+@dataclass
+class CollageOptions:
+    """Render options for a collage generation.
+
+    Mirrors the configurable subset of ``CollageGenerator.generate()``.
+    """
+
+    entity: str = "album"
+    cols: int = 3
+    rows: int = 3
+    period: str = "7day"
+    tile_size: Optional[int] = None
+    theme: Optional[str] = None
+    overlay_style: Optional[str] = None
+    show_text: bool = True
+    preset: Optional[str] = None
+    corner_radius: int = 0
+    border_width: int = 0
+    border_color: Optional[str] = None
+    spacing: int = 0
+    fallback_style: Optional[str] = None
+
+    def build_kwargs(self) -> dict:
+        """Return kwargs for ``CollageGenerator.generate()``, omitting library defaults."""
+        kwargs: dict = {}
+        if self.theme is not None and self.theme != THEME_DARK:
+            kwargs["theme"] = self.theme
+        if self.overlay_style is not None and self.overlay_style != OVERLAY_BANNER:
+            kwargs["overlay_style"] = self.overlay_style
+        if not self.show_text:
+            kwargs["show_text"] = False
+        if self.preset is not None:
+            kwargs["preset"] = self.preset
+        if self.corner_radius:
+            kwargs["corner_radius"] = self.corner_radius
+        if self.border_width:
+            kwargs["border_width"] = self.border_width
+        if self.border_color is not None:
+            kwargs["border_color"] = self.border_color
+        if self.spacing:
+            kwargs["spacing"] = self.spacing
+        if (
+            self.fallback_style is not None
+            and self.fallback_style != FALLBACK_STYLE_GRADIENT
+        ):
+            kwargs["fallback_style"] = self.fallback_style
+        return kwargs
+
+
+def parse_collage_args(args: list[str]) -> CollageOptions:
     """
     Parses CLI arguments for collage command.
-    Returns (entity, cols, rows, period, tile_size).
+    Returns a CollageOptions instance.
     """
-    entity = "album"
-    cols = 3
-    rows = 3
-    period = "7day"
-    tile_size: Optional[int] = None
+    options = CollageOptions()
 
     max_cols = CollageGenerator.MAX_COLS
     max_rows = CollageGenerator.MAX_ROWS
@@ -698,6 +882,23 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[in
         "alltime": "overall",
         "always": "overall",
     }
+    theme_aliases = {
+        "dark": "dark",
+        "light": "light",
+        "glass": "glassmorphic",
+        "glassmorphic": "glassmorphic",
+        "sunset": "sunset",
+        "neon": "neon",
+    }
+    overlay_aliases = {
+        "banner": "banner",
+        "full_tint": "full_tint",
+        "fulltint": "full_tint",
+        "tint": "full_tint",
+        "gradient": "gradient",
+        "pill": "pill",
+        "clean": "clean",
+    }
 
     dim_pattern = re.compile(r"^(\d+)x(\d+)$", re.IGNORECASE)
     single_dim_pattern = re.compile(r"^(\d+)$")
@@ -705,29 +906,90 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[in
         r"^(?:ts|tile|tilesize|tile_size|size)[:=](\d+)$", re.IGNORECASE
     )
     tile_size_px_pattern = re.compile(r"^(\d+)\s*px$", re.IGNORECASE)
+    theme_pattern = re.compile(r"^(?:theme|tema)[:=](\w+)$", re.IGNORECASE)
+    overlay_pattern = re.compile(r"^(?:overlay|ov|style)[:=](\w+)$", re.IGNORECASE)
+    preset_pattern = re.compile(r"^preset[:=]([\w-]+)$", re.IGNORECASE)
+    corner_pattern = re.compile(r"^(?:corner|radius)[:=](\d+)$", re.IGNORECASE)
+    border_pattern = re.compile(r"^border[:=](\d+)$", re.IGNORECASE)
+    border_color_pattern = re.compile(
+        r"^(?:border_color|bc)[:=](#?[0-9a-fA-F]{6})$", re.IGNORECASE
+    )
+    spacing_pattern = re.compile(r"^(?:spacing|gap)[:=](\d+)$", re.IGNORECASE)
+    fallback_pattern = re.compile(r"^fallback[:=](\w+)$", re.IGNORECASE)
+
+    usage = (
+        "Usage: /collage [size: 3x3|10x10] [period: week|1m|overall] "
+        "[entity: album|artist|track] [tile_size: 150px] "
+        "[theme: dark|light|glassmorphic|sunset|neon] "
+        "[overlay: banner|full_tint|gradient|pill|clean] "
+        "[preset: story|post|header|wallpaper|4k] [notext] "
+        "[corner: n] [border: n] [border_color: #hex] [spacing: n] "
+        "[fallback: gradient|black]"
+    )
 
     for arg in args:
         clean = arg.strip().lower()
         if not clean:
             continue
         if clean in entity_aliases:
-            entity = entity_aliases[clean]
+            options.entity = entity_aliases[clean]
         elif clean in period_aliases:
-            period = period_aliases[clean]
+            options.period = period_aliases[clean]
+        elif clean == "notext":
+            options.show_text = False
+        elif clean in PRESET_ALIASES:
+            options.preset = PRESET_ALIASES[clean]
+        elif m := theme_pattern.match(clean):
+            key = m.group(1).lower()
+            if key not in theme_aliases or theme_aliases[key] not in THEMES:
+                raise ValueError(f"Unknown theme: '{key}'. Options are: {THEMES}")
+            options.theme = theme_aliases[key]
+        elif m := overlay_pattern.match(clean):
+            key = m.group(1).lower()
+            if key not in overlay_aliases or overlay_aliases[key] not in OVERLAY_STYLES:
+                raise ValueError(
+                    f"Unknown overlay style: '{key}'. Options are: {OVERLAY_STYLES}"
+                )
+            options.overlay_style = overlay_aliases[key]
+        elif m := preset_pattern.match(clean):
+            key = m.group(1).lower()
+            preset = PRESET_ALIASES.get(key, key)
+            if preset not in PRESET_NAMES:
+                raise ValueError(
+                    f"Unknown preset: '{key}'. Options are: {PRESET_NAMES} "
+                    f"(short: {tuple(PRESET_ALIASES)})"
+                )
+            options.preset = preset
+        elif m := fallback_pattern.match(clean):
+            key = m.group(1).lower()
+            if key not in FALLBACK_STYLES:
+                raise ValueError(
+                    f"Unknown fallback style: '{key}'. Options are: {FALLBACK_STYLES}"
+                )
+            options.fallback_style = key
+        elif m := corner_pattern.match(clean):
+            options.corner_radius = int(m.group(1))
+        elif m := border_pattern.match(clean):
+            options.border_width = int(m.group(1))
+        elif m := border_color_pattern.match(arg.strip()):
+            color = m.group(1)
+            options.border_color = color if color.startswith("#") else f"#{color}"
+        elif m := spacing_pattern.match(clean):
+            options.spacing = int(m.group(1))
         elif m := tile_size_pattern.match(clean):
             ts = int(m.group(1))
             if not (min_tile <= ts <= max_tile):
                 raise ValueError(
                     f"Tile size must be between {min_tile} and {max_tile} pixels, got {ts}"
                 )
-            tile_size = ts
+            options.tile_size = ts
         elif m := tile_size_px_pattern.match(clean):
             ts = int(m.group(1))
             if not (min_tile <= ts <= max_tile):
                 raise ValueError(
                     f"Tile size must be between {min_tile} and {max_tile} pixels, got {ts}"
                 )
-            tile_size = ts
+            options.tile_size = ts
         elif m := dim_pattern.match(clean):
             c, r = int(m.group(1)), int(m.group(2))
             if not (1 <= c <= max_cols and 1 <= r <= max_rows):
@@ -738,7 +1000,7 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[in
                 raise ValueError(
                     f"Total tile count ({c * r}) exceeds maximum capacity of {max_tiles} tiles."
                 )
-            cols, rows = c, r
+            options.cols, options.rows = c, r
         elif m := single_dim_pattern.match(clean):
             d = int(m.group(1))
             if not (1 <= d <= max_cols):
@@ -749,13 +1011,19 @@ def parse_collage_args(args: list[str]) -> tuple[str, int, int, str, Optional[in
                 raise ValueError(
                     f"Total tile count ({d * d}) exceeds maximum capacity of {max_tiles} tiles."
                 )
-            cols, rows = d, d
+            options.cols, options.rows = d, d
         else:
-            raise ValueError(
-                f"Unrecognized parameter: '{arg}'. Usage: /collage [size: 3x3|10x10] [period: week|1m|overall] [entity: album|artist|track] [tile_size: 150px]"
-            )
+            raise ValueError(f"Unrecognized parameter: '{arg}'. {usage}")
 
-    return entity, cols, rows, period, tile_size
+    for name, value in (
+        ("corner_radius", options.corner_radius),
+        ("border_width", options.border_width),
+        ("spacing", options.spacing),
+    ):
+        if value < 0:
+            raise ValueError(f"{name} must be a non-negative integer, got {value}")
+
+    return options
 
 
 class CollageService:
@@ -763,31 +1031,37 @@ class CollageService:
     A service class to handle collage generation using lastfmcollagegenerator.
     """
 
-    def __init__(self, api_key: str | None = None, api_secret: str | None = None):
+    DEFAULT_CACHE_DIR = config.PROJECT_ROOT / "data" / "collage_cache"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        cache_dir: str | None = None,
+    ):
         key = api_key or config.LASTFM_API_KEY or ""
         secret = api_secret or config.LASTFM_API_SECRET or ""
+        cache_dir = cache_dir or str(self.DEFAULT_CACHE_DIR)
+        os.makedirs(cache_dir, exist_ok=True)
+        self._cache_dir = cache_dir
         self._generator = CollageGenerator(lastfm_api_key=key, lastfm_api_secret=secret)
 
     async def generate_collage_image(
-        self,
-        username: str,
-        entity: str = "album",
-        cols: int = 3,
-        rows: int = 3,
-        period: str = "7day",
-        tile_size: Optional[int] = None,
+        self, username: str, options: CollageOptions
     ) -> BytesIO:
         """
         Generates a collage image asynchronously via asyncio.to_thread and returns a BytesIO stream.
         """
         image = await asyncio.to_thread(
             self._generator.generate,
-            entity=entity,
+            entity=options.entity,
             username=username,
-            cols=cols,
-            rows=rows,
-            period=period,
-            tile_size=tile_size,
+            cols=options.cols,
+            rows=options.rows,
+            period=options.period,
+            tile_size=options.tile_size,
+            cache_dir=self._cache_dir,
+            **options.build_kwargs(),
         )
         bio = BytesIO()
         image.save(bio, format="PNG")

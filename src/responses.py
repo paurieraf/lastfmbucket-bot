@@ -64,8 +64,13 @@ collage_choose_period = Template("""
 🎨 Choose the period for your $size $entity_type collage:
 """)
 
+collage_choose_style = Template("""
+🎨 Choose the style for your $size $entity_type collage:
+$current_style
+""")
+
 collage_caption = Template("""
-🎨 <b>Top $entity_type collage</b> ($size, $period$tile_note) for <a href="https://www.last.fm/user/$lastfm_username">$lastfm_username</a>
+🎨 <b>Top $entity_type collage</b> ($size, $period$tile_note$style_note) for <a href="https://www.last.fm/user/$lastfm_username">$lastfm_username</a>
 """)
 
 collage_error = Template("""

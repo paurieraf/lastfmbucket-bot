@@ -13,55 +13,41 @@ from telegram import Chat as TgChat, Update, User as TgUser
 import bot
 import commands
 from callbacks import Action, Callback, Entity, Period
-from services import CollageService, ViewService, parse_collage_args
+from services import CollageOptions, CollageService, ViewService, parse_collage_args
 
 
 class TestCollageArgParser(unittest.TestCase):
     def test_default_args(self):
-        entity, cols, rows, period, tile_size = parse_collage_args([])
-        self.assertEqual(entity, "album")
-        self.assertEqual(cols, 3)
-        self.assertEqual(rows, 3)
-        self.assertEqual(period, "7day")
-        self.assertIsNone(tile_size)
+        opts = parse_collage_args([])
+        self.assertEqual(opts.entity, "album")
+        self.assertEqual(opts.cols, 3)
+        self.assertEqual(opts.rows, 3)
+        self.assertEqual(opts.period, "7day")
+        self.assertIsNone(opts.tile_size)
+        self.assertIsNone(opts.theme)
+        self.assertIsNone(opts.overlay_style)
+        self.assertTrue(opts.show_text)
+        self.assertIsNone(opts.preset)
 
     def test_custom_dimensions(self):
-        entity, cols, rows, period, tile_size = parse_collage_args(["5x5"])
-        self.assertEqual(cols, 5)
-        self.assertEqual(rows, 5)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["3x5"])
-        self.assertEqual(cols, 3)
-        self.assertEqual(rows, 5)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["4"])
-        self.assertEqual(cols, 4)
-        self.assertEqual(rows, 4)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["10x10"])
-        self.assertEqual(cols, 10)
-        self.assertEqual(rows, 10)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["10x5"])
-        self.assertEqual(cols, 10)
-        self.assertEqual(rows, 5)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["20x20"])
-        self.assertEqual(cols, 20)
-        self.assertEqual(rows, 20)
+        self.assertEqual(parse_collage_args(["5x5"]).cols, 5)
+        self.assertEqual(parse_collage_args(["5x5"]).rows, 5)
+        self.assertEqual(parse_collage_args(["3x5"]).cols, 3)
+        self.assertEqual(parse_collage_args(["3x5"]).rows, 5)
+        self.assertEqual(parse_collage_args(["4"]).cols, 4)
+        self.assertEqual(parse_collage_args(["4"]).rows, 4)
+        self.assertEqual(parse_collage_args(["10x10"]).cols, 10)
+        self.assertEqual(parse_collage_args(["10x10"]).rows, 10)
+        self.assertEqual(parse_collage_args(["10x5"]).cols, 10)
+        self.assertEqual(parse_collage_args(["10x5"]).rows, 5)
+        self.assertEqual(parse_collage_args(["20x20"]).cols, 20)
+        self.assertEqual(parse_collage_args(["20x20"]).rows, 20)
 
     def test_tile_size_parsing(self):
-        entity, cols, rows, period, tile_size = parse_collage_args(["150px"])
-        self.assertEqual(tile_size, 150)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["ts:200"])
-        self.assertEqual(tile_size, 200)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["size=100"])
-        self.assertEqual(tile_size, 100)
-
-        entity, cols, rows, period, tile_size = parse_collage_args(["tile_size:300"])
-        self.assertEqual(tile_size, 300)
+        self.assertEqual(parse_collage_args(["150px"]).tile_size, 150)
+        self.assertEqual(parse_collage_args(["ts:200"]).tile_size, 200)
+        self.assertEqual(parse_collage_args(["size=100"]).tile_size, 100)
+        self.assertEqual(parse_collage_args(["tile_size:300"]).tile_size, 300)
 
     def test_invalid_tile_size_raises(self):
         with self.assertRaises(ValueError):
@@ -72,28 +58,85 @@ class TestCollageArgParser(unittest.TestCase):
             parse_collage_args(["ts:10"])
 
     def test_custom_entities(self):
-        self.assertEqual(parse_collage_args(["artists"])[0], "artist")
-        self.assertEqual(parse_collage_args(["album"])[0], "album")
-        self.assertEqual(parse_collage_args(["tracks"])[0], "track")
-        self.assertEqual(parse_collage_args(["songs"])[0], "track")
+        self.assertEqual(parse_collage_args(["artists"]).entity, "artist")
+        self.assertEqual(parse_collage_args(["album"]).entity, "album")
+        self.assertEqual(parse_collage_args(["tracks"]).entity, "track")
+        self.assertEqual(parse_collage_args(["songs"]).entity, "track")
 
     def test_custom_periods(self):
-        self.assertEqual(parse_collage_args(["week"])[3], "7day")
-        self.assertEqual(parse_collage_args(["1month"])[3], "1month")
-        self.assertEqual(parse_collage_args(["3m"])[3], "3month")
-        self.assertEqual(parse_collage_args(["6m"])[3], "6month")
-        self.assertEqual(parse_collage_args(["year"])[3], "12month")
-        self.assertEqual(parse_collage_args(["overall"])[3], "overall")
+        self.assertEqual(parse_collage_args(["week"]).period, "7day")
+        self.assertEqual(parse_collage_args(["1month"]).period, "1month")
+        self.assertEqual(parse_collage_args(["3m"]).period, "3month")
+        self.assertEqual(parse_collage_args(["6m"]).period, "6month")
+        self.assertEqual(parse_collage_args(["year"]).period, "12month")
+        self.assertEqual(parse_collage_args(["overall"]).period, "overall")
+
+    def test_theme_parsing(self):
+        self.assertEqual(parse_collage_args(["theme:neon"]).theme, "neon")
+        self.assertEqual(parse_collage_args(["theme=glass"]).theme, "glassmorphic")
+        self.assertEqual(parse_collage_args(["tema:sunset"]).theme, "sunset")
+        self.assertEqual(parse_collage_args(["theme:dark"]).theme, "dark")
+        with self.assertRaises(ValueError):
+            parse_collage_args(["theme:unknown"])
+
+    def test_overlay_parsing(self):
+        self.assertEqual(parse_collage_args(["overlay:pill"]).overlay_style, "pill")
+        self.assertEqual(parse_collage_args(["ov:clean"]).overlay_style, "clean")
+        self.assertEqual(parse_collage_args(["style:tint"]).overlay_style, "full_tint")
+        self.assertEqual(
+            parse_collage_args(["overlay:gradient"]).overlay_style, "gradient"
+        )
+        with self.assertRaises(ValueError):
+            parse_collage_args(["overlay:bogus"])
+
+    def test_preset_parsing(self):
+        self.assertEqual(
+            parse_collage_args(["preset:instagram-story"]).preset, "instagram-story"
+        )
+        self.assertEqual(parse_collage_args(["preset:story"]).preset, "instagram-story")
+        self.assertEqual(parse_collage_args(["story"]).preset, "instagram-story")
+        self.assertEqual(parse_collage_args(["post"]).preset, "instagram-post")
+        self.assertEqual(parse_collage_args(["header"]).preset, "twitter-header")
+        self.assertEqual(parse_collage_args(["wallpaper"]).preset, "desktop-wallpaper")
+        self.assertEqual(parse_collage_args(["4k"]).preset, "desktop-wallpaper-4k")
+        with self.assertRaises(ValueError):
+            parse_collage_args(["preset:bogus"])
+
+    def test_geometry_parsing(self):
+        opts = parse_collage_args(
+            ["corner:12", "border:3", "border_color:#FF5A5F", "spacing:8"]
+        )
+        self.assertEqual(opts.corner_radius, 12)
+        self.assertEqual(opts.border_width, 3)
+        self.assertEqual(opts.border_color, "#FF5A5F")
+        self.assertEqual(opts.spacing, 8)
+        opts2 = parse_collage_args(["radius:5", "bc:abcdef", "gap:2"])
+        self.assertEqual(opts2.corner_radius, 5)
+        self.assertEqual(opts2.border_color, "#abcdef")
+        self.assertEqual(opts2.spacing, 2)
+        with self.assertRaises(ValueError):
+            parse_collage_args(["border_color:#ZZZZZZ"])
+
+    def test_notext_and_fallback(self):
+        self.assertFalse(parse_collage_args(["notext"]).show_text)
+        self.assertEqual(parse_collage_args(["fallback:black"]).fallback_style, "black")
+        self.assertEqual(
+            parse_collage_args(["fallback:gradient"]).fallback_style, "gradient"
+        )
+        with self.assertRaises(ValueError):
+            parse_collage_args(["fallback:bogus"])
 
     def test_mixed_order_arguments(self):
-        entity, cols, rows, period, tile_size = parse_collage_args(
-            ["overall", "artist", "10x10", "150px"]
+        opts = parse_collage_args(
+            ["overall", "artist", "10x10", "150px", "theme:neon", "overlay:pill"]
         )
-        self.assertEqual(entity, "artist")
-        self.assertEqual(cols, 10)
-        self.assertEqual(rows, 10)
-        self.assertEqual(period, "overall")
-        self.assertEqual(tile_size, 150)
+        self.assertEqual(opts.entity, "artist")
+        self.assertEqual(opts.cols, 10)
+        self.assertEqual(opts.rows, 10)
+        self.assertEqual(opts.period, "overall")
+        self.assertEqual(opts.tile_size, 150)
+        self.assertEqual(opts.theme, "neon")
+        self.assertEqual(opts.overlay_style, "pill")
 
     def test_invalid_dimension_raises(self):
         with self.assertRaises(ValueError):
@@ -130,12 +173,51 @@ class TestCallbackProtocol(unittest.TestCase):
         self.assertEqual(decoded.period, Period.WEEK)
         self.assertEqual(decoded.size, "10x10")
 
+    def test_collage_callback_roundtrip_with_style(self):
+        cb = Callback(
+            action=Action.COLLAGE,
+            owner_id=987654321,
+            entity=Entity.ARTIST,
+            period=Period.WEEK,
+            size="10x10",
+            theme="neon",
+            overlay="pill",
+            preset="story",
+            style="set",
+        )
+        encoded = cb.encode()
+        self.assertLessEqual(len(encoded.encode("utf-8")), 64)
+
+        decoded = Callback.decode(encoded)
+        self.assertIsNotNone(decoded)
+        self.assertEqual(decoded.theme, "neon")
+        self.assertEqual(decoded.overlay, "pill")
+        self.assertEqual(decoded.preset, "story")
+        self.assertEqual(decoded.style, "set")
+
+    def test_legacy_callback_decode(self):
+        decoded = Callback.decode("1|cl|987654321|a|w|10x10")
+        self.assertIsNotNone(decoded)
+        self.assertEqual(decoded.entity, Entity.ARTIST)
+        self.assertEqual(decoded.period, Period.WEEK)
+        self.assertEqual(decoded.size, "10x10")
+        self.assertIsNone(decoded.theme)
+        self.assertIsNone(decoded.overlay)
+        self.assertIsNone(decoded.preset)
+        self.assertIsNone(decoded.style)
+
     def test_collage_conversion_helpers(self):
         cb = Callback(
             action=Action.COLLAGE, owner_id=123, entity=Entity.TRACK, period=Period.YEAR
         )
         self.assertEqual(cb.to_collage_entity_str(), "track")
         self.assertEqual(cb.to_collage_period_str(), "12month")
+
+    def test_preset_conversion_helper(self):
+        cb = Callback(action=Action.COLLAGE, owner_id=123, preset="story")
+        self.assertEqual(cb.to_collage_preset_str(), "instagram-story")
+        cb_none = Callback(action=Action.COLLAGE, owner_id=123)
+        self.assertIsNone(cb_none.to_collage_preset_str())
 
 
 class TestCollageService(unittest.IsolatedAsyncioTestCase):
@@ -149,14 +231,22 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
         mock_gen_instance.generate.return_value = test_image
 
         service = CollageService(api_key="dummy_key", api_secret="dummy_secret")
-        bio = await service.generate_collage_image(
-            username="testuser",
+        options = CollageOptions(
             entity="album",
             cols=10,
             rows=10,
             period="7day",
             tile_size=150,
+            theme="neon",
+            overlay_style="pill",
+            preset="instagram-post",
+            corner_radius=12,
+            border_width=3,
+            border_color="#FF5A5F",
+            spacing=8,
+            fallback_style="black",
         )
+        bio = await service.generate_collage_image(username="testuser", options=options)
 
         self.assertIsInstance(bio, BytesIO)
         mock_gen_instance.generate.assert_called_once_with(
@@ -166,10 +256,42 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
             rows=10,
             period="7day",
             tile_size=150,
+            cache_dir=service._cache_dir,
+            theme="neon",
+            overlay_style="pill",
+            preset="instagram-post",
+            corner_radius=12,
+            border_width=3,
+            border_color="#FF5A5F",
+            spacing=8,
+            fallback_style="black",
         )
         # Verify it's a valid PNG image stream
         loaded_img = Image.open(bio)
         self.assertEqual(loaded_img.size, (300, 300))
+
+    @patch("services.CollageGenerator")
+    async def test_generate_collage_image_defaults_omit_style_kwargs(
+        self, mock_generator_cls
+    ):
+        mock_gen_instance = MagicMock()
+        mock_generator_cls.return_value = mock_gen_instance
+        test_image = Image.new("RGB", (300, 300), color=(255, 0, 0))
+        mock_gen_instance.generate.return_value = test_image
+
+        service = CollageService(api_key="dummy_key", api_secret="dummy_secret")
+        options = CollageOptions(entity="album", cols=3, rows=3, period="7day")
+        await service.generate_collage_image(username="testuser", options=options)
+
+        mock_gen_instance.generate.assert_called_once_with(
+            entity="album",
+            username="testuser",
+            cols=3,
+            rows=3,
+            period="7day",
+            tile_size=None,
+            cache_dir=service._cache_dir,
+        )
 
 
 class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
@@ -189,6 +311,28 @@ class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("(3x3, all time, 150px tiles)", caption_with_tile)
 
+    def test_collage_caption_with_style(self):
+        caption = ViewService.build_collage_caption(
+            entity_type="album",
+            size="3x3",
+            period="7day",
+            lastfm_username="testuser",
+            theme="neon",
+            overlay_style="pill",
+            show_text=False,
+        )
+        self.assertIn("neon, pill, sense text", caption)
+
+    def test_collage_caption_with_preset(self):
+        caption = ViewService.build_collage_caption(
+            entity_type="album",
+            size="3x3",
+            period="overall",
+            lastfm_username="testuser",
+            preset="instagram-post",
+        )
+        self.assertIn("instagram-post 3x3", caption)
+
     async def test_interactive_selection_steps(self):
         mock_lastfm_service = MagicMock()
         view_service = ViewService(mock_lastfm_service)
@@ -202,22 +346,53 @@ class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(kb.inline_keyboard), 1)
         self.assertEqual(len(kb.inline_keyboard[0]), 3)
 
-        # Step 2: Entity chosen, no size
+        # Step 2: Entity chosen, no size/preset -> size step with presets row
         msg, kb = await view_service.build_collage_selection_response(
             telegram_user_id=123, entity=Entity.ALBUM
         )
         self.assertIn("size", msg.lower())
         self.assertIsNotNone(kb)
-        # Verify 2 rows of sizes
-        self.assertEqual(len(kb.inline_keyboard), 2)
+        self.assertEqual(len(kb.inline_keyboard), 3)
         self.assertEqual(len(kb.inline_keyboard[0]), 3)
         self.assertEqual(len(kb.inline_keyboard[1]), 3)
+        self.assertEqual(len(kb.inline_keyboard[2]), 5)
 
         # Step 3: Entity and size chosen, no period
         msg, kb = await view_service.build_collage_selection_response(
             telegram_user_id=123, entity=Entity.ALBUM, size="10x10"
         )
         self.assertIn("period", msg.lower())
+        self.assertIsNotNone(kb)
+
+        # Step 3b: Entity and preset chosen, no period
+        msg, kb = await view_service.build_collage_selection_response(
+            telegram_user_id=123, entity=Entity.ALBUM, preset="story"
+        )
+        self.assertIn("instagram-story", msg.lower())
+        self.assertIsNotNone(kb)
+
+        # Step 4: Entity, size and period chosen, no style -> style step
+        msg, kb = await view_service.build_collage_selection_response(
+            telegram_user_id=123, entity=Entity.ALBUM, size="10x10", period=Period.WEEK
+        )
+        self.assertIn("style", msg.lower())
+        self.assertIsNotNone(kb)
+        self.assertEqual(len(kb.inline_keyboard), 3)
+        self.assertEqual(len(kb.inline_keyboard[0]), 5)
+        self.assertEqual(len(kb.inline_keyboard[1]), 5)
+        self.assertEqual(len(kb.inline_keyboard[2]), 1)
+
+        # Style selected -> style step re-rendered with selection
+        msg, kb = await view_service.build_collage_selection_response(
+            telegram_user_id=123,
+            entity=Entity.ALBUM,
+            size="10x10",
+            period=Period.WEEK,
+            theme="neon",
+            overlay="pill",
+            style="set",
+        )
+        self.assertIn("neon / pill", msg.lower())
         self.assertIsNotNone(kb)
 
 

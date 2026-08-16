@@ -21,7 +21,7 @@ import db
 import lastfm
 import responses
 from callbacks import Action, Callback
-from services import CollageService, ViewService, parse_collage_args
+from services import CollageOptions, CollageService, ViewService, parse_collage_args
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -143,8 +143,8 @@ async def _handle_collage(
     view_service: ViewService = context.bot_data["view_service"]
     collage_service: CollageService = context.bot_data["collage_service"]
 
-    # If all 3 parameters are chosen, generate collage
-    if cb.entity and cb.size and cb.period:
+    # If style step was confirmed (Skip), generate collage
+    if cb.entity and (cb.size or cb.preset) and cb.period and cb.style == "skip":
         user = db.get_user(user_id)
         if not user:
             await query.edit_message_text(
@@ -154,11 +154,12 @@ async def _handle_collage(
 
         entity_str = cb.to_collage_entity_str()
         period_str = cb.to_collage_period_str()
-        size_str = cb.size
+        preset_str = cb.to_collage_preset_str()
         try:
-            cols, rows = map(int, size_str.lower().split("x"))
+            cols, rows = map(int, (cb.size or "3x3").lower().split("x"))
         except Exception:
             cols, rows = 3, 3
+        size_str = preset_str or cb.size or "3x3"
 
         await query.edit_message_text(
             f"🎨 Generating your {size_str} {entity_str} collage..."
@@ -172,20 +173,28 @@ async def _handle_collage(
             except Exception:
                 pass
 
+        options = CollageOptions(
+            entity=entity_str,
+            cols=cols,
+            rows=rows,
+            period=period_str,
+            preset=preset_str,
+            theme=cb.theme,
+            overlay_style=cb.overlay,
+        )
         try:
             async with COLLAGE_SEMAPHORE:
                 bio = await collage_service.generate_collage_image(
-                    username=user.lastfm_username,
-                    entity=entity_str,
-                    cols=cols,
-                    rows=rows,
-                    period=period_str,
+                    username=user.lastfm_username, options=options
                 )
             caption = view_service.build_collage_caption(
                 entity_type=entity_str,
                 size=size_str,
                 period=period_str,
                 lastfm_username=user.lastfm_username,
+                theme=cb.theme,
+                overlay_style=cb.overlay,
+                preset=preset_str,
             )
             if query.message:
                 await query.message.reply_photo(photo=bio, caption=caption)
@@ -199,9 +208,19 @@ async def _handle_collage(
 
     # Otherwise show next step in interactive selection
     response, reply_markup = await view_service.build_collage_selection_response(
-        user_id, entity=cb.entity, size=cb.size, period=cb.period
+        user_id,
+        entity=cb.entity,
+        size=cb.size,
+        period=cb.period,
+        preset=cb.preset,
+        theme=cb.theme,
+        overlay=cb.overlay,
+        style=cb.style,
     )
-    await query.edit_message_text(text=response, reply_markup=reply_markup)
+    if reply_markup:
+        await query.edit_message_text(text=response, reply_markup=reply_markup)
+    elif response:
+        await query.edit_message_text(text=response)
 
 
 CALLBACK_ROUTES = {
@@ -454,14 +473,17 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Parse arguments
     try:
-        entity, cols, rows, period, tile_size = parse_collage_args(context.args)
+        options = parse_collage_args(context.args)
     except ValueError as e:
         await message.reply_text(f"⚠️ {e}")
         return
 
-    size_str = f"{cols}x{rows}"
+    if options.preset:
+        size_str = options.preset
+    else:
+        size_str = f"{options.cols}x{options.rows}"
     status_msg = await message.reply_text(
-        f"🎨 Generating your {size_str} {entity} collage..."
+        f"🎨 Generating your {size_str} {options.entity} collage..."
     )
     if update.effective_chat:
         try:
@@ -475,19 +497,18 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         async with COLLAGE_SEMAPHORE:
             bio = await collage_service.generate_collage_image(
-                username=db_user.lastfm_username,
-                entity=entity,
-                cols=cols,
-                rows=rows,
-                period=period,
-                tile_size=tile_size,
+                username=db_user.lastfm_username, options=options
             )
         caption = view_service.build_collage_caption(
-            entity_type=entity,
+            entity_type=options.entity,
             size=size_str,
-            period=period,
+            period=options.period,
             lastfm_username=db_user.lastfm_username,
-            tile_size=tile_size,
+            tile_size=options.tile_size,
+            theme=options.theme,
+            overlay_style=options.overlay_style,
+            preset=options.preset,
+            show_text=options.show_text,
         )
         await message.reply_photo(photo=bio, caption=caption)
     except Exception as e:
