@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from PIL import Image
 from telegram import Chat as TgChat, Update, User as TgUser
+import telegram
 
 import bot
 import commands
@@ -480,6 +481,33 @@ class TestCommandDecoratorsAndHandlers(unittest.IsolatedAsyncioTestCase):
         entity, period = commands._parse_tops_args(["tracks", "overall"])
         self.assertEqual(entity, commands.lastfm.EntityType.TRACK)
         self.assertEqual(period, commands.lastfm.Period.OVERALL)
+
+
+class TestEditMessageText(unittest.IsolatedAsyncioTestCase):
+    async def test_tolerates_message_not_modified(self):
+        mock_query = MagicMock()
+        mock_query.edit_message_text = AsyncMock(
+            side_effect=telegram.error.BadRequest("Message is not modified")
+        )
+        await commands._edit_message_text(mock_query, "hello", None)
+        mock_query.edit_message_text.assert_awaited_once_with(text="hello")
+
+    async def test_passes_reply_markup(self):
+        mock_query = MagicMock()
+        mock_query.edit_message_text = AsyncMock()
+        markup = MagicMock()
+        await commands._edit_message_text(mock_query, "hello", markup)
+        mock_query.edit_message_text.assert_awaited_once_with(
+            text="hello", reply_markup=markup
+        )
+
+    async def test_rethrows_other_errors(self):
+        mock_query = MagicMock()
+        mock_query.edit_message_text = AsyncMock(
+            side_effect=telegram.error.BadRequest("Another error")
+        )
+        with self.assertRaises(telegram.error.BadRequest):
+            await commands._edit_message_text(mock_query, "hello", None)
 
 
 if __name__ == "__main__":

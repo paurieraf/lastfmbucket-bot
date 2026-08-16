@@ -132,6 +132,22 @@ async def _handle_tops(
     )
 
 
+async def _edit_message_text(
+    query: telegram.CallbackQuery,
+    text: str,
+    reply_markup: telegram.InlineKeyboardMarkup | None = None,
+) -> None:
+    """Edit a message, tolerating Telegram's 'Message is not modified' error."""
+    try:
+        if reply_markup:
+            await query.edit_message_text(text=text, reply_markup=reply_markup)
+        else:
+            await query.edit_message_text(text=text)
+    except telegram.error.BadRequest as e:
+        if "not modified" not in str(e).lower():
+            raise
+
+
 async def _handle_collage(
     update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
 ) -> None:
@@ -217,10 +233,8 @@ async def _handle_collage(
         overlay=cb.overlay,
         style=cb.style,
     )
-    if reply_markup:
-        await query.edit_message_text(text=response, reply_markup=reply_markup)
-    elif response:
-        await query.edit_message_text(text=response)
+    if reply_markup or response:
+        await _edit_message_text(query, response, reply_markup)
 
 
 CALLBACK_ROUTES = {
