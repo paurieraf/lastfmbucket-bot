@@ -443,7 +443,7 @@ async def vibe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     current = track_list[0] if track_list else None
 
     # Generate vibe
-    vibe_text = ai.generate_vibe(track_list, current)
+    vibe_text = await ai.generate_vibe(track_list, current)
     await update.message.reply_text(f"🎧 *Your Vibe*\n\n{vibe_text}", parse_mode="Markdown")
 
 
@@ -478,7 +478,7 @@ async def roast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tracks_list = [f"{item.item.artist} - {item.item.title}" for item in (top_tracks or [])[:5]]
 
     # Generate roast
-    roast_text = ai.generate_roast(artists_list, tracks_list)
+    roast_text = await ai.generate_roast(artists_list, tracks_list)
     await update.message.reply_text(f"🎤 *Music Taste Roast*\n\n{roast_text}", parse_mode="Markdown")
 
 
@@ -509,7 +509,7 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     artists_list = [item.item.name for item in top_artists[:10]]
 
     # Generate recommendations
-    rec_text = ai.generate_recommendations(artists_list)
+    rec_text = await ai.generate_recommendations(artists_list)
     await update.message.reply_text(
         f"💡 *Recommendations Based On Your Taste*\n\n{rec_text}",
         parse_mode="Markdown",
