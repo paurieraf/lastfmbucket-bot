@@ -64,7 +64,7 @@ graph TB
     end
 
     LASTFM["☁️ Last.fm API 2.0"]
-    COLLAGE_GEN["🎨 lastfmcollagegenerator 1.3.0"]
+    COLLAGE_GEN["🎨 lastfmcollagegenerator 1.3.1"]
     DB[("🗄️ SQLite WAL<br/>data/lastfmbucket-bot.db")]
     CADDY["🔒 Caddy Reverse Proxy<br/>HTTPS Auto-TLS"]
     ADMIN_USER["System Admin<br/>(Browser)"]
@@ -95,7 +95,7 @@ For the product overview and user journey, see [docs/PRODUCT_PRESENTATION.md](do
 | Package Manager | [uv](https://docs.astral.sh/uv/) (Astral) | latest |
 | Bot Framework | python-telegram-bot | 22.8 |
 | Last.fm API | pylast | 7.0.0 |
-| Collage Generator | [lastfmcollagegenerator](https://pypi.org/project/lastfmcollagegenerator/) | 1.3.0 |
+| Collage Generator | [lastfmcollagegenerator](https://pypi.org/project/lastfmcollagegenerator/) | 1.3.1 |
 | Database ORM | Peewee | 3.18.3 |
 | Database | SQLite (WAL mode) | — |
 | AI / LLM | Ollama + qwen2.5:0.5b | ≥ 0.4.0 |

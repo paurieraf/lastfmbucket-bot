@@ -120,6 +120,10 @@ class TestCollageArgParser(unittest.TestCase):
 
     def test_notext_and_fallback(self):
         self.assertFalse(parse_collage_args(["notext"]).show_text)
+        self.assertTrue(parse_collage_args([]).show_playcount)
+        self.assertFalse(parse_collage_args(["noplaycount"]).show_playcount)
+        self.assertFalse(parse_collage_args(["nocount"]).show_playcount)
+        self.assertFalse(parse_collage_args(["noplaycounts"]).show_playcount)
         self.assertEqual(parse_collage_args(["fallback:black"]).fallback_style, "black")
         self.assertEqual(
             parse_collage_args(["fallback:gradient"]).fallback_style, "gradient"
@@ -256,6 +260,7 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
             tile_size=150,
             theme="neon",
             overlay_style="pill",
+            show_playcount=False,
             font_bold=True,
             filter="duotone",
             preset="instagram-post",
@@ -278,6 +283,7 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs["tile_size"], 150)
         self.assertEqual(call_kwargs["theme"], "neon")
         self.assertEqual(call_kwargs["overlay_style"], "pill")
+        self.assertFalse(call_kwargs["show_playcount"])
         self.assertTrue(call_kwargs["font_bold"])
         self.assertIn("filters", call_kwargs)
         self.assertEqual(call_kwargs["preset"], "instagram-post")

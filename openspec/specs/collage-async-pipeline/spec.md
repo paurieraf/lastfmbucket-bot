@@ -1,7 +1,7 @@
 # collage-async-pipeline Specification
 
 ## Purpose
-Implementa la generació de collages de forma nativament asíncrona aprofitant la v1.3.0 de la llibreria i el motor d'exportació d'imatges.
+Implementa la generació de collages de forma nativament asíncrona aprofitant la v1.3.1 de la llibreria i el motor d'exportació d'imatges.
 ## Requirements
 ### Requirement: Native asynchronous collage processing
 El bot SHALL invocar la versió nativa asíncrona de la generació de collages en lloc d'embolcallar operacions síncrones en subprocessos de Python.

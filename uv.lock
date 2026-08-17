@@ -476,7 +476,7 @@ dependencies = [
 requires-dist = [
     { name = "emoji", specifier = "==2.15.0" },
     { name = "humanize", specifier = "==4.15.0" },
-    { name = "lastfmcollagegenerator", specifier = ">=1.3.0" },
+    { name = "lastfmcollagegenerator", specifier = ">=1.3.1" },
     { name = "nicegui", specifier = ">=2.0.0" },
     { name = "ollama", specifier = ">=0.4.0" },
     { name = "peewee", specifier = "==3.18.3" },
@@ -489,7 +489,7 @@ requires-dist = [
 
 [[package]]
 name = "lastfmcollagegenerator"
-version = "1.3.0"
+version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -499,9 +499,9 @@ dependencies = [
     { name = "pylast" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/55/66/a6c8565cbae09f0f9b4efd8ba3a4a95bb12605b83f1ed725ba48a7faf446/lastfmcollagegenerator-1.3.0.tar.gz", hash = "sha256:8b3472304c685838ac295762c5833957e53d49b3807e1378fb29f33047027a48", size = 973044, upload-time = "2026-08-17T14:50:59.605Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/90/3c710a1dea90206a0d0987c29d65b9ab1c2f55822e80c1a61b6005dea1f6/lastfmcollagegenerator-1.3.1.tar.gz", hash = "sha256:f657edb660540184c5bec18e23846df5e3c3feb096a2aaefa4f550a6e88e6ea4", size = 974691, upload-time = "2026-08-17T16:00:33.041Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/93/340ac0875b7917aa5b6170061ec3bbb27aacb021c18208615214ea71091b/lastfmcollagegenerator-1.3.0-py3-none-any.whl", hash = "sha256:e1cd7ffeea1cd9a8806a7e4e3896e0c96b85ee60763260376ea3c702a6600a18", size = 444254, upload-time = "2026-08-17T14:51:01.003Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/a1/4bbd5e82f10825dc5c98e5ea1671462ec76dab3bb94f0feb5aa424582f73/lastfmcollagegenerator-1.3.1-py3-none-any.whl", hash = "sha256:eccdd0be565ad19fc048896ebe6511816f640af95e8afcfebb2b0cec16cb8a74", size = 445097, upload-time = "2026-08-17T16:00:30.618Z" },
 ]
 
 [[package]]

@@ -8,7 +8,7 @@
    - `python-telegram-bot` v22.8 running in polling mode.
    - 14 slash commands: `/start`, `/status`, `/np`, `/tops`, `/collage`, `/preferences`, `/help`, `/changelog`, `/set`, `/privacy`, `/compare`, `/vibe`, `/roast`, `/recommend`.
    - Callback queries with strict 64-byte compact protocol: `v|action|owner_id|entity|period|size`.
-   - Visual composite image grid generator powered by `lastfmcollagegenerator` v1.3.0 (async pipeline, WebP export, themes, filters).
+   - Visual composite image grid generator powered by `lastfmcollagegenerator` v1.3.1 (async pipeline, WebP export, themes, filters).
 2. **Database & Data Layer (`src/db.py`)**:
    - Peewee ORM 3.18.3 with SQLite in WAL mode.
    - Models: `User`, `Chat`, `CommandLog`.

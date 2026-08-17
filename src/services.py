@@ -896,6 +896,7 @@ class CollageOptions:
     theme: Optional[str] = None
     overlay_style: Optional[str] = None
     show_text: bool = True
+    show_playcount: bool = True
     font_bold: bool = False
     preset: Optional[str] = None
     corner_radius: int = 0
@@ -914,6 +915,8 @@ class CollageOptions:
             kwargs["overlay_style"] = self.overlay_style
         if not self.show_text:
             kwargs["show_text"] = False
+        if not self.show_playcount:
+            kwargs["show_playcount"] = False
         if self.font_bold:
             kwargs["font_bold"] = True
         if self.preset is not None:
@@ -1032,7 +1035,7 @@ def parse_collage_args(args: list[str]) -> CollageOptions:
         "[entity: album|artist|track] [tile_size: 150px] "
         "[theme: dark|light|glassmorphic|sunset|neon|adaptive] "
         "[overlay: banner|full_tint|gradient|pill|clean] "
-        "[preset: story|post|header|wallpaper|4k] [notext] [bold] "
+        "[preset: story|post|header|wallpaper|4k] [notext] [noplaycount] [bold] "
         "[filter: duotone|bw|sepia|cyberpunk|sunset|matrix] "
         "[corner: n] [border: n] [border_color: #hex] [spacing: n] "
         "[fallback: gradient|black]"
@@ -1048,6 +1051,8 @@ def parse_collage_args(args: list[str]) -> CollageOptions:
             options.period = period_aliases[clean]
         elif clean == "notext":
             options.show_text = False
+        elif clean in ("noplaycount", "nocount", "noplaycounts"):
+            options.show_playcount = False
         elif clean == "bold":
             options.font_bold = True
         elif clean in PRESET_ALIASES:
