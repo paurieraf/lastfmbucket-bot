@@ -97,10 +97,49 @@ class Crown(Model):
 MODELS = [User, Chat, CommandLog, ChatMember, Crown]
 
 """
-DB Connection
+DB Connection & Migrations
 """
+
+
+def run_migrations(database=None) -> None:
+    """
+    Ensure schema migrations are applied to existing database tables.
+    Peewee's create_tables(safe=True) only creates missing tables; it does
+    not alter or add missing columns to already existing SQLite tables.
+    """
+    target_db = database or db
+
+    # Table columns to ensure exist: (table_name, column_name, sql_definition)
+    expected_columns = [
+        ("user", "group_opt_out", "INTEGER NOT NULL DEFAULT 0"),
+        ("chat", "telegram_chat_name", "TEXT NOT NULL DEFAULT ''"),
+        ("chat", "chat_type", "TEXT NOT NULL DEFAULT ''"),
+        ("commandlog", "args", "TEXT NOT NULL DEFAULT ''"),
+        ("commandlog", "chat_id", "INTEGER NULL"),
+        ("chatmember", "opt_out", "INTEGER NOT NULL DEFAULT 0"),
+    ]
+
+    for table_name, column_name, col_def in expected_columns:
+        try:
+            cursor = target_db.execute_sql(f"PRAGMA table_info('{table_name}')")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            if existing_cols and column_name not in existing_cols:
+                logger.info(
+                    f"Applying DB migration: adding '{column_name}' column to '{table_name}' table"
+                )
+                target_db.execute_sql(
+                    f"ALTER TABLE '{table_name}' ADD COLUMN {column_name} {col_def}"
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to migrate '{column_name}' on '{table_name}': {e}",
+                exc_info=True,
+            )
+
+
 db.connect()
 db.create_tables(MODELS, safe=True)
+run_migrations()
 
 """
 DB Methods
@@ -283,11 +322,7 @@ def get_crown(chat_id: int, artist_name: str) -> Crown | None:
 
 
 def upsert_crown(
-    chat_id: int,
-    artist_name: str,
-    artist_url: str,
-    user: User,
-    playcount: int,
+    chat_id: int, artist_name: str, artist_url: str, user: User, playcount: int
 ) -> tuple[Crown, Crown | None]:
     """
     Updates or inserts a crown for an artist in a chat.
@@ -370,11 +405,7 @@ def get_chat_crowns_leaderboard(chat_id: int, limit: int = 10) -> list[dict]:
             for c in sample_crowns
         ]
         leaderboard.append(
-            {
-                "user": entry.user,
-                "crown_count": entry.count,
-                "samples": samples,
-            }
+            {"user": entry.user, "crown_count": entry.count, "samples": samples}
         )
 
     return leaderboard

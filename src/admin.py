@@ -61,18 +61,21 @@ def dashboard():
         ui.label("LastfmBucket Admin").classes("text-xl text-white font-bold")
         ui.space()
         with ui.row():
-            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
-            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props("flat color=white")
-            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props("flat color=white")
+            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props(
+                "flat color=white"
+            )
+            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props(
+                "flat color=white"
+            )
+            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props(
+                "flat color=white"
+            )
             ui.button("Command Logs", on_click=lambda: ui.navigate.to("/logs")).props(
                 "flat color=white"
             )
             ui.button(
                 "Logout",
-                on_click=lambda: (
-                    app.storage.user.clear(),
-                    ui.navigate.to("/login"),
-                ),
+                on_click=lambda: (app.storage.user.clear(), ui.navigate.to("/login")),
             ).props("flat color=white")
 
     with ui.column().classes("w-full p-4"):
@@ -105,17 +108,30 @@ def dashboard():
         # Recent commands
         ui.label("Recent Commands").classes("text-xl font-bold mt-6 mb-2")
         recent_commands = (
-            CommandLog.select()
-            .order_by(CommandLog.timestamp.desc())
-            .limit(10)
+            CommandLog.select().order_by(CommandLog.timestamp.desc()).limit(10)
         )
         columns = [
             {"name": "time", "label": "Time", "field": "time", "align": "left"},
-            {"name": "command", "label": "Command", "field": "command", "align": "left"},
+            {
+                "name": "command",
+                "label": "Command",
+                "field": "command",
+                "align": "left",
+            },
             {"name": "username", "label": "User", "field": "username", "align": "left"},
             {"name": "args", "label": "Args", "field": "args", "align": "left"},
-            {"name": "chat_name", "label": "Chat", "field": "chat_name", "align": "left"},
-            {"name": "chat_type", "label": "Type", "field": "chat_type", "align": "left"},
+            {
+                "name": "chat_name",
+                "label": "Chat",
+                "field": "chat_name",
+                "align": "left",
+            },
+            {
+                "name": "chat_type",
+                "label": "Type",
+                "field": "chat_type",
+                "align": "left",
+            },
         ]
         rows = [
             {
@@ -145,6 +161,7 @@ def users_page():
                 "telegram_id": u.telegram_id,
                 "telegram_username": u.telegram_username or "-",
                 "lastfm_username": u.lastfm_username or "-",
+                "group_opt_out": "Yes" if u.group_opt_out else "No",
             }
             for u in users
         ]
@@ -160,9 +177,15 @@ def users_page():
         ui.label("LastfmBucket Admin").classes("text-xl text-white font-bold")
         ui.space()
         with ui.row():
-            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
-            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props("flat color=white")
-            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props("flat color=white")
+            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props(
+                "flat color=white"
+            )
+            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props(
+                "flat color=white"
+            )
+            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props(
+                "flat color=white"
+            )
             ui.button("Command Logs", on_click=lambda: ui.navigate.to("/logs")).props(
                 "flat color=white"
             )
@@ -176,7 +199,12 @@ def users_page():
 
         columns = [
             {"name": "id", "label": "ID", "field": "id", "align": "left"},
-            {"name": "telegram_id", "label": "Telegram ID", "field": "telegram_id", "align": "left"},
+            {
+                "name": "telegram_id",
+                "label": "Telegram ID",
+                "field": "telegram_id",
+                "align": "left",
+            },
             {
                 "name": "telegram_username",
                 "label": "Telegram Username",
@@ -189,7 +217,18 @@ def users_page():
                 "field": "lastfm_username",
                 "align": "left",
             },
-            {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+            {
+                "name": "group_opt_out",
+                "label": "Opt Out",
+                "field": "group_opt_out",
+                "align": "center",
+            },
+            {
+                "name": "actions",
+                "label": "Actions",
+                "field": "actions",
+                "align": "center",
+            },
         ]
 
         users = User.select().order_by(User.id.desc())
@@ -199,6 +238,7 @@ def users_page():
                 "telegram_id": u.telegram_id,
                 "telegram_username": u.telegram_username or "-",
                 "lastfm_username": u.lastfm_username or "-",
+                "group_opt_out": "Yes" if u.group_opt_out else "No",
             }
             for u in users
         ]
@@ -226,9 +266,15 @@ def chats_page():
         ui.label("LastfmBucket Admin").classes("text-xl text-white font-bold")
         ui.space()
         with ui.row():
-            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
-            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props("flat color=white")
-            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props("flat color=white")
+            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props(
+                "flat color=white"
+            )
+            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props(
+                "flat color=white"
+            )
+            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props(
+                "flat color=white"
+            )
             ui.button("Command Logs", on_click=lambda: ui.navigate.to("/logs")).props(
                 "flat color=white"
             )
@@ -242,14 +288,24 @@ def chats_page():
 
         columns = [
             {"name": "id", "label": "ID", "field": "id", "align": "left"},
-            {"name": "telegram_id", "label": "Telegram ID", "field": "telegram_id", "align": "left"},
+            {
+                "name": "telegram_id",
+                "label": "Telegram ID",
+                "field": "telegram_id",
+                "align": "left",
+            },
             {
                 "name": "telegram_chat_name",
                 "label": "Chat Name",
                 "field": "telegram_chat_name",
                 "align": "left",
             },
-            {"name": "chat_type", "label": "Type", "field": "chat_type", "align": "left"},
+            {
+                "name": "chat_type",
+                "label": "Type",
+                "field": "chat_type",
+                "align": "left",
+            },
         ]
 
         chats = Chat.select().order_by(Chat.id.desc())
@@ -276,9 +332,15 @@ def logs_page():
         ui.label("LastfmBucket Admin").classes("text-xl text-white font-bold")
         ui.space()
         with ui.row():
-            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
-            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props("flat color=white")
-            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props("flat color=white")
+            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props(
+                "flat color=white"
+            )
+            ui.button("Users", on_click=lambda: ui.navigate.to("/users")).props(
+                "flat color=white"
+            )
+            ui.button("Chats", on_click=lambda: ui.navigate.to("/chats")).props(
+                "flat color=white"
+            )
             ui.button("Command Logs", on_click=lambda: ui.navigate.to("/logs")).props(
                 "flat color=white"
             )
@@ -298,7 +360,9 @@ def logs_page():
             def apply_filters():
                 query = CommandLog.select().order_by(CommandLog.timestamp.desc())
                 if command_filter.value:
-                    query = query.where(CommandLog.command.contains(command_filter.value))
+                    query = query.where(
+                        CommandLog.command.contains(command_filter.value)
+                    )
                 if user_filter.value:
                     query = query.where(CommandLog.username.contains(user_filter.value))
                 query = query.limit(100)
@@ -318,14 +382,23 @@ def logs_page():
                 table.update()
 
             ui.button("Filter", on_click=apply_filters).props("color=primary")
-            ui.button("Clear", on_click=lambda: (
-                command_filter.set_value(""),
-                user_filter.set_value(""),
-                apply_filters(),
-            )).props("color=secondary")
+            ui.button(
+                "Clear",
+                on_click=lambda: (
+                    command_filter.set_value(""),
+                    user_filter.set_value(""),
+                    apply_filters(),
+                ),
+            ).props("color=secondary")
 
         columns = [
-            {"name": "time", "label": "Time", "field": "time", "align": "left", "sortable": True},
+            {
+                "name": "time",
+                "label": "Time",
+                "field": "time",
+                "align": "left",
+                "sortable": True,
+            },
             {
                 "name": "command",
                 "label": "Command",
@@ -341,7 +414,12 @@ def logs_page():
                 "sortable": True,
             },
             {"name": "args", "label": "Args", "field": "args", "align": "left"},
-            {"name": "chat_name", "label": "Chat", "field": "chat_name", "align": "left"},
+            {
+                "name": "chat_name",
+                "label": "Chat",
+                "field": "chat_name",
+                "align": "left",
+            },
             {
                 "name": "chat_type",
                 "label": "Type",
@@ -364,9 +442,9 @@ def logs_page():
             for c in logs
         ]
 
-        table = ui.table(columns=columns, rows=rows, row_key="time", pagination=20).classes(
-            "w-full"
-        )
+        table = ui.table(
+            columns=columns, rows=rows, row_key="time", pagination=20
+        ).classes("w-full")
 
 
 def run_admin():

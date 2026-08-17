@@ -513,9 +513,11 @@ class TestEditMessageText(unittest.IsolatedAsyncioTestCase):
 class TestDatabaseGroupAndCrowns(unittest.TestCase):
     def setUp(self):
         import db
+
         self.db = db
         self.orig_db = db.db
         from playhouse.sqlite_ext import SqliteExtDatabase
+
         self.test_db = SqliteExtDatabase(":memory:")
         self.db.db = self.test_db
         self.db.db.bind(self.db.MODELS, bind_refs=False, bind_backrefs=False)
@@ -602,7 +604,52 @@ class TestDatabaseGroupAndCrowns(unittest.TestCase):
 
         grace_crowns = self.db.get_user_crowns(-1004, 401)
         self.assertEqual(len(grace_crowns), 2)
-        self.assertEqual(grace_crowns[0].artist_name, "Artist B")  # higher playcount first
+        self.assertEqual(
+            grace_crowns[0].artist_name, "Artist B"
+        )  # higher playcount first
+
+    def test_run_migrations_adds_missing_group_opt_out(self):
+        # Simulate an old legacy database where 'user' table lacks group_opt_out column
+        from playhouse.sqlite_ext import SqliteExtDatabase
+
+        legacy_db = SqliteExtDatabase(":memory:")
+        legacy_db.connect()
+        legacy_db.execute_sql(
+            "CREATE TABLE user ("
+            "id INTEGER NOT NULL PRIMARY KEY,"
+            "telegram_id BIGINT NOT NULL UNIQUE,"
+            "telegram_username VARCHAR(255) NOT NULL,"
+            "lastfm_username VARCHAR(255) NOT NULL"
+            ")"
+        )
+        legacy_db.execute_sql(
+            "INSERT INTO user (telegram_id, telegram_username, lastfm_username) "
+            "VALUES (999, 'legacy_user', 'legacy_lfm')"
+        )
+
+        # Check column is initially absent
+        cursor = legacy_db.execute_sql("PRAGMA table_info('user')")
+        cols_before = {row[1] for row in cursor.fetchall()}
+        self.assertNotIn("group_opt_out", cols_before)
+
+        # Run migration on legacy_db
+        self.db.run_migrations(legacy_db)
+
+        # Check column is now added
+        cursor = legacy_db.execute_sql("PRAGMA table_info('user')")
+        cols_after = {row[1] for row in cursor.fetchall()}
+        self.assertIn("group_opt_out", cols_after)
+
+        # Verify Peewee query on migrated DB works without OperationalError
+        self.db.User._meta.database = legacy_db
+        try:
+            users = list(self.db.User.select().where(self.db.User.telegram_id == 999))
+            self.assertEqual(len(users), 1)
+            self.assertEqual(users[0].telegram_username, "legacy_user")
+            self.assertFalse(users[0].group_opt_out)
+        finally:
+            self.db.User._meta.database = self.test_db
+            legacy_db.close()
 
 
 class TestGroupService(unittest.IsolatedAsyncioTestCase):
@@ -624,15 +671,23 @@ class TestGroupService(unittest.IsolatedAsyncioTestCase):
 
         from services import GroupService
 
-        with patch("services.db.get_linked_chat_members") as mock_members, \
-             patch("services.db.upsert_crown") as mock_upsert:
-            u1 = MagicMock(telegram_id=1, telegram_username="alice", lastfm_username="alice_lfm")
-            u2 = MagicMock(telegram_id=2, telegram_username="bob", lastfm_username="bob_lfm")
+        with (
+            patch("services.db.get_linked_chat_members") as mock_members,
+            patch("services.db.upsert_crown") as mock_upsert,
+        ):
+            u1 = MagicMock(
+                telegram_id=1, telegram_username="alice", lastfm_username="alice_lfm"
+            )
+            u2 = MagicMock(
+                telegram_id=2, telegram_username="bob", lastfm_username="bob_lfm"
+            )
             mock_members.return_value = [u1, u2]
             mock_upsert.return_value = (MagicMock(), None)
 
             service = GroupService(mock_lfm)
-            html_msg, success = await service.get_whoknows(-999, "Indie Chat", "radiohead")
+            html_msg, success = await service.get_whoknows(
+                -999, "Indie Chat", "radiohead"
+            )
 
             self.assertTrue(success)
             self.assertIn("Radiohead", html_msg)
@@ -645,21 +700,29 @@ class TestGroupService(unittest.IsolatedAsyncioTestCase):
         mock_lfm.get_artist_canonical_info.return_value = None
 
         from services import GroupService
+
         service = GroupService(mock_lfm)
-        html_msg, success = await service.get_whoknows(-999, "Chat", "NonExistentBand123")
+        html_msg, success = await service.get_whoknows(
+            -999, "Chat", "NonExistentBand123"
+        )
 
         self.assertFalse(success)
         self.assertIn("Could not find artist", html_msg)
 
     async def test_get_whoknows_no_listeners(self):
         mock_lfm = MagicMock()
-        mock_lfm.get_artist_canonical_info.return_value = ("Obscure Band", "https://url")
+        mock_lfm.get_artist_canonical_info.return_value = (
+            "Obscure Band",
+            "https://url",
+        )
         mock_lfm.get_user_artist_playcount.return_value = 0
 
         from services import GroupService
 
         with patch("services.db.get_linked_chat_members") as mock_members:
-            u1 = MagicMock(telegram_id=1, telegram_username="alice", lastfm_username="alice_lfm")
+            u1 = MagicMock(
+                telegram_id=1, telegram_username="alice", lastfm_username="alice_lfm"
+            )
             mock_members.return_value = [u1]
 
             service = GroupService(mock_lfm)
@@ -691,7 +754,9 @@ class TestWhoknowsAndCrownsCommands(unittest.IsolatedAsyncioTestCase):
         mock_context.bot.send_chat_action = AsyncMock()
 
         await commands.whoknows(mock_update, mock_context)
-        mock_group_svc.get_whoknows.assert_awaited_once_with(-555, "Cool Group", "Fontaines D.C.")
+        mock_group_svc.get_whoknows.assert_awaited_once_with(
+            -555, "Cool Group", "Fontaines D.C."
+        )
         mock_msg.reply_text.assert_awaited_once_with("👑 Ranking HTML")
 
     @patch("commands.db.log_command")
@@ -707,14 +772,17 @@ class TestWhoknowsAndCrownsCommands(unittest.IsolatedAsyncioTestCase):
         mock_context = MagicMock()
         mock_context.args = []
         mock_group_svc = MagicMock()
-        mock_group_svc.get_crowns_hall_of_fame = AsyncMock(return_value="🏆 Hall of Fame HTML")
+        mock_group_svc.get_crowns_hall_of_fame = AsyncMock(
+            return_value="🏆 Hall of Fame HTML"
+        )
         mock_context.bot_data = {"group_service": mock_group_svc}
 
         await commands.crowns(mock_update, mock_context)
-        mock_group_svc.get_crowns_hall_of_fame.assert_awaited_once_with(-555, "Cool Group")
+        mock_group_svc.get_crowns_hall_of_fame.assert_awaited_once_with(
+            -555, "Cool Group"
+        )
         mock_msg.reply_text.assert_awaited_once_with("🏆 Hall of Fame HTML")
 
 
 if __name__ == "__main__":
     unittest.main()
-
