@@ -127,9 +127,23 @@ class TestCollageArgParser(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_collage_args(["fallback:bogus"])
 
+    def test_filter_and_bold_parsing(self):
+        opts = parse_collage_args(["bold", "filter:duotone"])
+        self.assertTrue(opts.font_bold)
+        self.assertEqual(opts.filter, "duotone")
+
+        opts2 = parse_collage_args(["fx:sepia"])
+        self.assertEqual(opts2.filter, "sepia")
+
+        opts3 = parse_collage_args(["filter:duotone:#123456,#abcdef"])
+        self.assertEqual(opts3.filter, "duotone:#123456,#abcdef")
+
+        with self.assertRaises(ValueError):
+            parse_collage_args(["filter:unknown_filter"])
+
     def test_mixed_order_arguments(self):
         opts = parse_collage_args(
-            ["overall", "artist", "10x10", "150px", "theme:neon", "overlay:pill"]
+            ["overall", "artist", "10x10", "150px", "theme:neon", "overlay:pill", "bold", "filter:matrix"]
         )
         self.assertEqual(opts.entity, "artist")
         self.assertEqual(opts.cols, 10)
@@ -138,6 +152,8 @@ class TestCollageArgParser(unittest.TestCase):
         self.assertEqual(opts.tile_size, 150)
         self.assertEqual(opts.theme, "neon")
         self.assertEqual(opts.overlay_style, "pill")
+        self.assertTrue(opts.font_bold)
+        self.assertEqual(opts.filter, "matrix")
 
     def test_invalid_dimension_raises(self):
         with self.assertRaises(ValueError):
@@ -227,9 +243,9 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
         mock_gen_instance = MagicMock()
         mock_generator_cls.return_value = mock_gen_instance
 
-        # Mock generate() returning a real in-memory PIL image
+        # Mock generate_async() returning a real in-memory PIL image
         test_image = Image.new("RGB", (300, 300), color=(255, 0, 0))
-        mock_gen_instance.generate.return_value = test_image
+        mock_gen_instance.generate_async = AsyncMock(return_value=test_image)
 
         service = CollageService(api_key="dummy_key", api_secret="dummy_secret")
         options = CollageOptions(
@@ -240,6 +256,8 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
             tile_size=150,
             theme="neon",
             overlay_style="pill",
+            font_bold=True,
+            filter="duotone",
             preset="instagram-post",
             corner_radius=12,
             border_width=3,
@@ -250,24 +268,26 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
         bio = await service.generate_collage_image(username="testuser", options=options)
 
         self.assertIsInstance(bio, BytesIO)
-        mock_gen_instance.generate.assert_called_once_with(
-            entity="album",
-            username="testuser",
-            cols=10,
-            rows=10,
-            period="7day",
-            tile_size=150,
-            cache_dir=service._cache_dir,
-            theme="neon",
-            overlay_style="pill",
-            preset="instagram-post",
-            corner_radius=12,
-            border_width=3,
-            border_color="#FF5A5F",
-            spacing=8,
-            fallback_style="black",
-        )
-        # Verify it's a valid PNG image stream
+        mock_gen_instance.generate_async.assert_awaited_once()
+        call_kwargs = mock_gen_instance.generate_async.await_args.kwargs
+        self.assertEqual(call_kwargs["entity"], "album")
+        self.assertEqual(call_kwargs["username"], "testuser")
+        self.assertEqual(call_kwargs["cols"], 10)
+        self.assertEqual(call_kwargs["rows"], 10)
+        self.assertEqual(call_kwargs["period"], "7day")
+        self.assertEqual(call_kwargs["tile_size"], 150)
+        self.assertEqual(call_kwargs["theme"], "neon")
+        self.assertEqual(call_kwargs["overlay_style"], "pill")
+        self.assertTrue(call_kwargs["font_bold"])
+        self.assertIn("filters", call_kwargs)
+        self.assertEqual(call_kwargs["preset"], "instagram-post")
+        self.assertEqual(call_kwargs["corner_radius"], 12)
+        self.assertEqual(call_kwargs["border_width"], 3)
+        self.assertEqual(call_kwargs["border_color"], "#FF5A5F")
+        self.assertEqual(call_kwargs["spacing"], 8)
+        self.assertEqual(call_kwargs["fallback_style"], "black")
+
+        # Verify it's a valid exported image stream (WebP by default)
         loaded_img = Image.open(bio)
         self.assertEqual(loaded_img.size, (300, 300))
 
@@ -278,13 +298,13 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
         mock_gen_instance = MagicMock()
         mock_generator_cls.return_value = mock_gen_instance
         test_image = Image.new("RGB", (300, 300), color=(255, 0, 0))
-        mock_gen_instance.generate.return_value = test_image
+        mock_gen_instance.generate_async = AsyncMock(return_value=test_image)
 
         service = CollageService(api_key="dummy_key", api_secret="dummy_secret")
         options = CollageOptions(entity="album", cols=3, rows=3, period="7day")
         await service.generate_collage_image(username="testuser", options=options)
 
-        mock_gen_instance.generate.assert_called_once_with(
+        mock_gen_instance.generate_async.assert_awaited_once_with(
             entity="album",
             username="testuser",
             cols=3,
@@ -321,8 +341,10 @@ class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
             theme="neon",
             overlay_style="pill",
             show_text=False,
+            font_bold=True,
+            filter_name="duotone",
         )
-        self.assertIn("neon, pill, sense text", caption)
+        self.assertIn("neon, pill, sense text, bold, filtre duotone", caption)
 
     def test_collage_caption_with_preset(self):
         caption = ViewService.build_collage_caption(

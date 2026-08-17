@@ -4,6 +4,7 @@ import html
 import logging
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Callable, Optional
@@ -20,6 +21,12 @@ from lastfmcollagegenerator.constants import (
     THEME_DARK,
     THEMES,
 )
+from lastfmcollagegenerator.effects import (
+    DuotoneFilter,
+    ImageFilter,
+    VisualEffectPipeline,
+)
+from lastfmcollagegenerator.export import export_image
 from lastfmcollagegenerator.fallback_art import FALLBACK_STYLE_GRADIENT, FALLBACK_STYLES
 from lastfmcollagegenerator.presets import PRESET_NAMES, SOCIAL_PRESETS
 
@@ -569,6 +576,8 @@ class ViewService:
         overlay_style: Optional[str] = None,
         preset: Optional[str] = None,
         show_text: bool = True,
+        font_bold: bool = False,
+        filter_name: Optional[str] = None,
     ) -> str:
         """Builds the caption HTML string for a generated collage."""
         period_display_map = {
@@ -594,6 +603,10 @@ class ViewService:
             style_parts.append(overlay_style.replace("_", " "))
         if not show_text:
             style_parts.append("sense text")
+        if font_bold:
+            style_parts.append("bold")
+        if filter_name:
+            style_parts.append(f"filtre {filter_name}")
         style_note = f", {', '.join(style_parts)}" if style_parts else ""
 
         return responses.collage_caption.substitute(
@@ -819,11 +832,60 @@ class ViewService:
         return "", None
 
 
+FILTER_ALIASES = {
+    "duotone": "duotone",
+    "bw": "bw",
+    "blackwhite": "bw",
+    "black_white": "bw",
+    "grayscale": "bw",
+    "greyscale": "bw",
+    "sepia": "sepia",
+    "cyberpunk": "cyberpunk",
+    "sunset": "sunset",
+    "matrix": "matrix",
+}
+
+FILTER_NAMES = (
+    "duotone",
+    "bw",
+    "sepia",
+    "cyberpunk",
+    "sunset",
+    "matrix",
+)
+
+
+def resolve_filter(
+    filter_spec: Optional[str],
+) -> Optional[ImageFilter | VisualEffectPipeline]:
+    if not filter_spec:
+        return None
+    clean = filter_spec.strip().lower()
+    if clean in ("duotone", "bw", "blackwhite", "black_white", "grayscale", "greyscale"):
+        return DuotoneFilter()
+    if clean == "sepia":
+        return DuotoneFilter(black_color=(44, 28, 14), white_color=(240, 220, 180))
+    if clean == "cyberpunk":
+        return DuotoneFilter(black_color=(20, 0, 40), white_color=(0, 255, 255))
+    if clean == "sunset":
+        return DuotoneFilter(black_color=(40, 10, 30), white_color=(255, 120, 50))
+    if clean == "matrix":
+        return DuotoneFilter(black_color=(0, 20, 0), white_color=(50, 255, 50))
+    if clean.startswith("duotone:") or clean.startswith("dt:"):
+        payload = clean.split(":", 1)[1]
+        parts = payload.split(",")
+        if len(parts) == 2:
+            return DuotoneFilter(black_color=parts[0].strip(), white_color=parts[1].strip())
+    raise ValueError(
+        f"Unknown filter: '{filter_spec}'. Supported options are: {', '.join(FILTER_NAMES)}, or duotone:<color1>,<color2>"
+    )
+
+
 @dataclass
 class CollageOptions:
     """Render options for a collage generation.
 
-    Mirrors the configurable subset of ``CollageGenerator.generate()``.
+    Mirrors the configurable subset of ``CollageGenerator.generate_async()``.
     """
 
     entity: str = "album"
@@ -834,15 +896,17 @@ class CollageOptions:
     theme: Optional[str] = None
     overlay_style: Optional[str] = None
     show_text: bool = True
+    font_bold: bool = False
     preset: Optional[str] = None
     corner_radius: int = 0
     border_width: int = 0
     border_color: Optional[str] = None
     spacing: int = 0
     fallback_style: Optional[str] = None
+    filter: Optional[str] = None
 
     def build_kwargs(self) -> dict:
-        """Return kwargs for ``CollageGenerator.generate()``, omitting library defaults."""
+        """Return kwargs for ``CollageGenerator.generate_async()``, omitting library defaults."""
         kwargs: dict = {}
         if self.theme is not None and self.theme != THEME_DARK:
             kwargs["theme"] = self.theme
@@ -850,6 +914,8 @@ class CollageOptions:
             kwargs["overlay_style"] = self.overlay_style
         if not self.show_text:
             kwargs["show_text"] = False
+        if self.font_bold:
+            kwargs["font_bold"] = True
         if self.preset is not None:
             kwargs["preset"] = self.preset
         if self.corner_radius:
@@ -865,6 +931,10 @@ class CollageOptions:
             and self.fallback_style != FALLBACK_STYLE_GRADIENT
         ):
             kwargs["fallback_style"] = self.fallback_style
+        if self.filter is not None:
+            resolved = resolve_filter(self.filter)
+            if resolved is not None:
+                kwargs["filters"] = resolved
         return kwargs
 
 
@@ -927,6 +997,7 @@ def parse_collage_args(args: list[str]) -> CollageOptions:
         "glassmorphic": "glassmorphic",
         "sunset": "sunset",
         "neon": "neon",
+        "adaptive": "adaptive",
     }
     overlay_aliases = {
         "banner": "banner",
@@ -954,13 +1025,15 @@ def parse_collage_args(args: list[str]) -> CollageOptions:
     )
     spacing_pattern = re.compile(r"^(?:spacing|gap)[:=](\d+)$", re.IGNORECASE)
     fallback_pattern = re.compile(r"^fallback[:=](\w+)$", re.IGNORECASE)
+    filter_pattern = re.compile(r"^(?:filter|fx)[:=]([\w:,#\(\)-]+)$", re.IGNORECASE)
 
     usage = (
         "Usage: /collage [size: 3x3|10x10] [period: week|1m|overall] "
         "[entity: album|artist|track] [tile_size: 150px] "
-        "[theme: dark|light|glassmorphic|sunset|neon] "
+        "[theme: dark|light|glassmorphic|sunset|neon|adaptive] "
         "[overlay: banner|full_tint|gradient|pill|clean] "
-        "[preset: story|post|header|wallpaper|4k] [notext] "
+        "[preset: story|post|header|wallpaper|4k] [notext] [bold] "
+        "[filter: duotone|bw|sepia|cyberpunk|sunset|matrix] "
         "[corner: n] [border: n] [border_color: #hex] [spacing: n] "
         "[fallback: gradient|black]"
     )
@@ -975,6 +1048,8 @@ def parse_collage_args(args: list[str]) -> CollageOptions:
             options.period = period_aliases[clean]
         elif clean == "notext":
             options.show_text = False
+        elif clean == "bold":
+            options.font_bold = True
         elif clean in PRESET_ALIASES:
             options.preset = PRESET_ALIASES[clean]
         elif m := theme_pattern.match(clean):
@@ -1005,6 +1080,10 @@ def parse_collage_args(args: list[str]) -> CollageOptions:
                     f"Unknown fallback style: '{key}'. Options are: {FALLBACK_STYLES}"
                 )
             options.fallback_style = key
+        elif m := filter_pattern.match(clean):
+            f_val = m.group(1).lower()
+            resolve_filter(f_val)
+            options.filter = f_val
         elif m := corner_pattern.match(clean):
             options.corner_radius = int(m.group(1))
         elif m := border_pattern.match(clean):
@@ -1085,13 +1164,12 @@ class CollageService:
         self._generator = CollageGenerator(lastfm_api_key=key, lastfm_api_secret=secret)
 
     async def generate_collage_image(
-        self, username: str, options: CollageOptions
+        self, username: str, options: CollageOptions, export_format: str = "WEBP"
     ) -> BytesIO:
         """
-        Generates a collage image asynchronously via asyncio.to_thread and returns a BytesIO stream.
+        Generates a collage image asynchronously via generate_async and returns a BytesIO stream.
         """
-        image = await asyncio.to_thread(
-            self._generator.generate,
+        image = await self._generator.generate_async(
             entity=options.entity,
             username=username,
             cols=options.cols,
@@ -1101,10 +1179,24 @@ class CollageService:
             cache_dir=self._cache_dir,
             **options.build_kwargs(),
         )
-        bio = BytesIO()
-        image.save(bio, format="PNG")
-        bio.seek(0)
-        return bio
+        ext = export_format.lower()
+        if ext == "jpg":
+            ext = "jpeg"
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            export_image(image, tmp_path, format=export_format)
+            with open(tmp_path, "rb") as f:
+                bio = BytesIO(f.read())
+            bio.name = f"collage.{ext}"
+            bio.seek(0)
+            return bio
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
 
 class GroupService:

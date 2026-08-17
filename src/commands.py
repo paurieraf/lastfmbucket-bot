@@ -573,6 +573,8 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             overlay_style=options.overlay_style,
             preset=options.preset,
             show_text=options.show_text,
+            font_bold=options.font_bold,
+            filter_name=options.filter,
         )
         await message.reply_photo(photo=bio, caption=caption)
     except Exception as e:
