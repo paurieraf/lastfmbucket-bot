@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-08-17
+
+### Added
+- Upgraded `lastfmcollagegenerator` to **v1.3.0**.
+- **Native Async I/O**: Switched `CollageService` from blocking thread workers (`asyncio.to_thread`) to native `await generate_async()`, boosting bot concurrency and responsiveness.
+- **Optimized WebP Export**: Integrated library's `export_image` utility to export composite collages directly as compressed WebP, reducing memory consumption and Telegram upload latency.
+- **Visual Filters**: Added `filter:` (alias `fx:`) option supporting `duotone`, `bw`/`grayscale`, `sepia`, `cyberpunk`, `sunset`, `matrix`, and custom `duotone:<color1>,<color2>`.
+- **Bold Typography**: Added `bold` CLI flag to render collage overlay text with bold styling.
+- **Adaptive Theme**: Added `theme:adaptive` supporting dynamic palette extraction from artwork.
+
 ## [0.3.0] - 2026-08-17
 
 ### Added

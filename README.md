@@ -28,7 +28,7 @@ It ships with a **web-based administration panel** (NiceGUI) and is designed to 
 | 🎵 **Now Playing** | Show currently playing track with album art | `/np` |
 | 📋 **Recent Tracks** | View last 5 scrobbled tracks with timestamps | `/status` |
 | 🏆 **Top Charts** | Interactive top artists / albums / tracks across 6 time periods | `/tops` |
-| 🎨 **Collage** | Visual composite image grids (1x1 up to 20x20, max 400 tiles) with dynamic resolution scaling | `/collage [size: 3x3|10x10] [period] [entity] [tile_size: 150px]` |
+| 🎨 **Collage** | Visual composite image grids (1x1 to 20x20, max 400 tiles) with themes, overlays, presets, visual filters (duotone, etc.), bold text, and WebP export | `/collage [size] [period] [entity] [theme:..] [filter:..] [bold]` |
 | 👥 **Comparison** | Compare your taste with another Last.fm user | `/compare <username>` |
 | 🤖 **AI Vibe** | AI mood analysis of your recent listening | `/vibe` |
 | 🔥 **AI Roast** | Humorous AI critique of your music taste | `/roast` |
@@ -64,7 +64,7 @@ graph TB
     end
 
     LASTFM["☁️ Last.fm API 2.0"]
-    COLLAGE_GEN["🎨 lastfmcollagegenerator 0.6.0"]
+    COLLAGE_GEN["🎨 lastfmcollagegenerator 1.3.0"]
     DB[("🗄️ SQLite WAL<br/>data/lastfmbucket-bot.db")]
     CADDY["🔒 Caddy Reverse Proxy<br/>HTTPS Auto-TLS"]
     ADMIN_USER["System Admin<br/>(Browser)"]
@@ -74,7 +74,7 @@ graph TB
     CMD --> CB
     CMD --> SVC
     SVC -- "pylast" --> LASTFM
-    SVC -- "lastfmcollagegenerator" --> COLLAGE_GEN
+    SVC -- "lastfmcollagegenerator (async)" --> COLLAGE_GEN
     SVC -- "ollama client" --> LLM
     SVC --> DB
     ADM --> DB
@@ -95,7 +95,7 @@ For the product overview and user journey, see [docs/PRODUCT_PRESENTATION.md](do
 | Package Manager | [uv](https://docs.astral.sh/uv/) (Astral) | latest |
 | Bot Framework | python-telegram-bot | 22.8 |
 | Last.fm API | pylast | 7.0.0 |
-| Collage Generator | [lastfmcollagegenerator](https://pypi.org/project/lastfmcollagegenerator/) | 0.6.0 |
+| Collage Generator | [lastfmcollagegenerator](https://pypi.org/project/lastfmcollagegenerator/) | 1.3.0 |
 | Database ORM | Peewee | 3.18.3 |
 | Database | SQLite (WAL mode) | — |
 | AI / LLM | Ollama + qwen2.5:0.5b | ≥ 0.4.0 |
@@ -206,7 +206,7 @@ docker compose logs -f admin
 /status             — Last 5 scrobbles with timestamps
 /tops               — Interactive top charts (Artists/Albums/Tracks × 6 periods)
 /tops artists week  — Direct shortcut: top artists this week
-/collage            — Visual collage grid (interactive or e.g. /collage 5x5 overall artist)
+/collage            — Visual collage grid (interactive or CLI with filters, bold, themes, presets)
 /whoknows <artist>  — Show who in the chat listens to an artist & crown leader (alias: /wk)
 /crowns [@user]     — Group crowns Hall of Fame or user crowns (alias: /mycrowns)
 /compare <user>     — Compare your taste with another Last.fm user

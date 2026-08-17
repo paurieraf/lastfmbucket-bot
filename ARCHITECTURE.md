@@ -76,7 +76,7 @@ The bot engine is located in `src/bot.py`, `src/commands.py`, `src/callbacks.py`
 | 3 | `/np` | `now_playing` (`commands.py:249`) | Queries currently playing track; generates view with `More info`, `🖼️ Cover` and `👑 Qui ho coneix?` buttons. | HTML + Inline Keyboard |
 | 4 | `/status` | `status` (`commands.py:310`) | Shows recent 5 tracks with relative timestamps (`humanize`); includes `Less info` and `🖼️ Cover` buttons. | HTML + Inline Keyboard |
 | 5 | `/tops` | `tops` (`commands.py:342`) | Multi-tier interactive top charts (Artist/Album/Track over 7d/1m/3m/6m/1y/overall) or direct args parser (`_parse_tops_args`). | HTML List (Top 10) or 2-Tier Keyboard |
-| 6 | `/collage` | `collage` (`commands.py:426`) | Generates composite collage photo (1x1 to 20x20, max 400 tiles, dynamic resolution, optional `tile_size`) using `lastfmcollagegenerator`. | Photo with HTML caption or 3-Tier Keyboard |
+| 6 | `/collage` | `collage` (`commands.py:426`) | Generates composite collage photo (1x1 to 20x20, max 400 tiles, dynamic resolution, optional `tile_size`, themes, filters, bold, WebP export) using `lastfmcollagegenerator` v1.3.0 asynchronously. | Photo with HTML caption or 4-Tier Keyboard |
 | 7 | `/whoknows` | `whoknows` (`commands.py:850`) | Compares playcounts for a specific artist across group members with canonical URL and dethronements (alias: `/wk`). | HTML podium list with crown |
 | 8 | `/crowns` | `crowns` (`commands.py:890`) | Displays chat crowns Hall of Fame or crowns held by a specific user (alias: `/mycrowns`). | HTML leaderboard / showcase |
 | 9 | `/compare` | `compare` (`commands.py:580`) | Compares listening stats, scrobble count, top artists, and common artists between caller and target. | HTML summary table |
