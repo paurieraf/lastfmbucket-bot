@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     zlib1g-dev \
     libjpeg-dev \
+    libpng-dev \
+    libwebp-dev \
     libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 

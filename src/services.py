@@ -1179,13 +1179,22 @@ class CollageService:
             cache_dir=self._cache_dir,
             **options.build_kwargs(),
         )
-        ext = export_format.lower()
+        target_fmt = export_format
+        ext = target_fmt.lower()
         if ext == "jpg":
             ext = "jpeg"
         with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
             tmp_path = tmp.name
         try:
-            export_image(image, tmp_path, format=export_format)
+            try:
+                export_image(image, tmp_path, format=target_fmt)
+            except (KeyError, Exception) as exp_err:
+                logging.warning(
+                    f"Export with format '{target_fmt}' failed ({exp_err}); falling back to PNG."
+                )
+                target_fmt = "PNG"
+                ext = "png"
+                export_image(image, tmp_path, format="PNG")
             with open(tmp_path, "rb") as f:
                 bio = BytesIO(f.read())
             bio.name = f"collage.{ext}"

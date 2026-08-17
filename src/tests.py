@@ -314,6 +314,32 @@ class TestCollageService(unittest.IsolatedAsyncioTestCase):
             cache_dir=service._cache_dir,
         )
 
+    @patch("services.CollageGenerator")
+    @patch("services.export_image")
+    async def test_generate_collage_image_fallback_on_unsupported_format(
+        self, mock_export_image, mock_generator_cls
+    ):
+        mock_gen_instance = MagicMock()
+        mock_generator_cls.return_value = mock_gen_instance
+        test_image = Image.new("RGB", (300, 300), color=(255, 0, 0))
+        mock_gen_instance.generate_async = AsyncMock(return_value=test_image)
+
+        # First call to export_image raises KeyError('WEBP'), second call succeeds
+        def side_effect(img, path, format=None, **kwargs):
+            if format == "WEBP":
+                raise KeyError("WEBP")
+            img.save(path, format=format)
+
+        mock_export_image.side_effect = side_effect
+
+        service = CollageService(api_key="dummy_key", api_secret="dummy_secret")
+        options = CollageOptions(entity="album", cols=3, rows=3, period="7day")
+        bio = await service.generate_collage_image(
+            username="testuser", options=options, export_format="WEBP"
+        )
+        self.assertEqual(bio.name, "collage.png")
+        self.assertEqual(mock_export_image.call_count, 2)
+
 
 class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
     def test_collage_caption(self):
