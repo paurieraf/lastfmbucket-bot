@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import logging
 import os
 import re
@@ -199,19 +200,27 @@ class ViewService:
             )
             return emojize(response), None, None
 
+        album = track.get_album()
+        track_album = album.title if album else ""
+        cover_image = album.get_cover_image() if (show_cover and album) else None
+
         response = responses.now_playing.substitute(
             lastfm_username=user.lastfm_username,
             track_artist=track.artist,
             track_url=track.get_url(),
             track_title=track.title,
-            track_album=track.get_album().title,
+            track_album=track_album,
         )
         keyboard = [
             [
                 telegram.InlineKeyboardButton(
                     "More info",
                     callback_data=Callback(Action.NP_MORE, telegram_user_id).encode(),
-                )
+                ),
+                telegram.InlineKeyboardButton(
+                    "👑 Qui ho coneix?",
+                    callback_data=Callback(Action.WHOKNOWS, telegram_user_id).encode(),
+                ),
             ]
         ]
         if not show_cover:
@@ -230,7 +239,7 @@ class ViewService:
         return (
             emojize(response),
             reply_markup,
-            track.get_album().get_cover_image() if show_cover else None,
+            cover_image,
         )
 
     async def build_lastfm_username_set_response(
@@ -446,7 +455,22 @@ class ViewService:
         self, telegram_user_id: int
     ) -> tuple[str, telegram.InlineKeyboardMarkup]:
         """Builds the preferences response."""
+        user = db.get_user(telegram_user_id)
+        opt_out = user.group_opt_out if user else False
+        opt_out_btn_text = (
+            "🔒 Ocultar-me de rànquings de grup"
+            if not opt_out
+            else "🔓 Mostrar-me a rànquings de grup"
+        )
         keyboard = [
+            [
+                telegram.InlineKeyboardButton(
+                    opt_out_btn_text,
+                    callback_data=Callback(
+                        Action.PREF_OPT_OUT, telegram_user_id
+                    ).encode(),
+                )
+            ],
             [
                 telegram.InlineKeyboardButton(
                     "Unlink your account",
@@ -454,10 +478,24 @@ class ViewService:
                         Action.PREF_UNLINK, telegram_user_id
                     ).encode(),
                 )
-            ]
+            ],
         ]
         reply_markup = telegram.InlineKeyboardMarkup(keyboard)
         return emojize(responses.preferences.substitute()), reply_markup
+
+    def build_preferences_toggle_opt_out_response(
+        self, telegram_user_id: int
+    ) -> str:
+        """Toggles user group ranking opt_out setting and returns feedback."""
+        is_opted_out = db.toggle_user_group_opt_out(telegram_user_id)
+        status_text = (
+            "Ocult dels rànquings de grup 🔒"
+            if is_opted_out
+            else "Visible als rànquings de grup 🔓"
+        )
+        return emojize(
+            responses.preferences_opt_out_updated.substitute(status=status_text)
+        )
 
     def build_preferences_unlink_account_response(self, telegram_user_id: int) -> str:
         """Builds the preferences unlink account response."""
@@ -1067,3 +1105,179 @@ class CollageService:
         image.save(bio, format="PNG")
         bio.seek(0)
         return bio
+
+
+class GroupService:
+    """
+    A service class to handle group music intelligence, WhoKnows rankings, and Crowns.
+    """
+
+    def __init__(self, lastfm_client: LastfmClient):
+        self._lastfm_client = lastfm_client
+
+    async def get_whoknows(
+        self, chat_id: int, chat_name: str, artist_query: str
+    ) -> tuple[str, bool]:
+        """
+        Executes WhoKnows query for a specific artist in a chat.
+        Returns (html_response_message, is_success).
+        """
+        # 1. Canonicalize artist with Last.fm
+        artist_info = await _run_lastfm_call(
+            self._lastfm_client.get_artist_canonical_info, artist_query
+        )
+        if not artist_info:
+            return responses.whoknows_artist_not_found.substitute(
+                artist_name=html.escape(artist_query)
+            ), False
+
+        canonical_name, artist_url = artist_info
+
+        # 2. Get active linked chat members (excluding opt_out)
+        members = await asyncio.to_thread(db.get_linked_chat_members, chat_id)
+        if not members:
+            return responses.whoknows_no_members.substitute(
+                chat_name=html.escape(chat_name or "this chat")
+            ), False
+
+        # 3. Query playcounts in parallel
+        async def _fetch_user_plays(user: db.User) -> tuple[db.User, int]:
+            plays = await _run_lastfm_call(
+                self._lastfm_client.get_user_artist_playcount,
+                user.lastfm_username,
+                canonical_name,
+            )
+            return user, plays
+
+        tasks = [_fetch_user_plays(m) for m in members]
+        user_plays_results = await asyncio.gather(*tasks)
+
+        # 4. Filter > 0 plays and sort descending
+        active_listeners = [
+            (u, plays) for u, plays in user_plays_results if plays > 0
+        ]
+        active_listeners.sort(key=lambda x: x[1], reverse=True)
+
+        if not active_listeners:
+            return responses.whoknows_no_listeners.substitute(
+                artist_name=html.escape(canonical_name),
+                artist_url=artist_url,
+                chat_name=html.escape(chat_name or "this chat"),
+            ), True
+
+        # 5. Check and update Crown
+        top_user, top_plays = active_listeners[0]
+        curr_crown, prev_crown = await asyncio.to_thread(
+            db.upsert_crown,
+            chat_id=chat_id,
+            artist_name=canonical_name,
+            artist_url=artist_url,
+            user=top_user,
+            playcount=top_plays,
+        )
+
+        dethroned_banner = ""
+        if prev_crown and prev_crown.user.telegram_id != top_user.telegram_id:
+            prev_name = prev_crown.user.telegram_username or f"User {prev_crown.user.telegram_id}"
+            new_name = top_user.telegram_username or f"User {top_user.telegram_id}"
+            dethroned_banner = (
+                f"\n\n⚔️ <b>NOU REI DE LA BANDA!</b> 👑\n"
+                f"<b>@{new_name}</b> ({top_plays:,} plays) ha destronat a <b>@{prev_name}</b> ({prev_crown.playcount:,} plays)!"
+            )
+
+        # 6. Format ranking list
+        total_plays = sum(p for _, p in active_listeners)
+        rank_badges = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        ranking_lines = []
+        for i, (u, plays) in enumerate(active_listeners[:15], start=1):
+            badge = rank_badges[i - 1] if i <= len(rank_badges) else f"{i}."
+            crown_icon = " 👑" if i == 1 else ""
+            uname = f"@{u.telegram_username}" if u.telegram_username else f"User {u.telegram_id}"
+            pct = (plays / total_plays * 100) if total_plays > 0 else 0
+            ranking_lines.append(
+                f"{badge} <b>{uname}</b> — <b>{plays:,}</b> plays{crown_icon} ({pct:.0f}%)"
+            )
+
+        ranking_list = "\n".join(ranking_lines)
+
+        response_html = responses.whoknows_ranking.substitute(
+            artist_name=html.escape(canonical_name),
+            artist_url=artist_url,
+            chat_name=html.escape(chat_name or "this chat"),
+            dethroned_banner=dethroned_banner,
+            ranking_list=ranking_list,
+            total_plays=f"{total_plays:,}",
+            listeners_count=len(active_listeners),
+        )
+        return emojize(response_html), True
+
+    async def get_crowns_hall_of_fame(self, chat_id: int, chat_name: str) -> str:
+        """
+        Retrieves the crowns leaderboard for a chat.
+        """
+        leaderboard = await asyncio.to_thread(db.get_chat_crowns_leaderboard, chat_id)
+        if not leaderboard:
+            return emojize(
+                responses.crowns_no_crowns.substitute(
+                    chat_name=html.escape(chat_name or "this chat")
+                )
+            )
+
+        rank_badges = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        lines = []
+        for i, entry in enumerate(leaderboard, start=1):
+            badge = rank_badges[i - 1] if i <= len(rank_badges) else f"{i}."
+            user = entry["user"]
+            count = entry["crown_count"]
+            uname = f"@{user.telegram_username}" if user.telegram_username else f"User {user.telegram_id}"
+            samples = entry["samples"]
+            sample_str = ", ".join(
+                f"<a href='{s['url']}'>{html.escape(s['name'])}</a> ({s['plays']:,})"
+                if s["url"] else f"{html.escape(s['name'])} ({s['plays']:,})"
+                for s in samples
+            )
+            samples_formatted = f" — <i>{sample_str}</i>" if sample_str else ""
+            lines.append(f"{badge} <b>{uname}:</b> {count} 👑{samples_formatted}")
+
+        return emojize(
+            responses.crowns_leaderboard.substitute(
+                chat_name=html.escape(chat_name or "this chat"),
+                leaderboard_list="\n".join(lines),
+            )
+        )
+
+    async def get_user_crowns_showcase(
+        self, chat_id: int, chat_name: str, target_user: db.User
+    ) -> str:
+        """
+        Retrieves all crowns held by a specific user in a chat.
+        """
+        crowns = await asyncio.to_thread(db.get_user_crowns, chat_id, target_user.telegram_id)
+        display_name = f"@{target_user.telegram_username}" if target_user.telegram_username else f"User {target_user.telegram_id}"
+
+        if not crowns:
+            return emojize(
+                responses.user_no_crowns.substitute(
+                    display_name=display_name,
+                    chat_name=html.escape(chat_name or "this chat"),
+                )
+            )
+
+        lines = []
+        for c in crowns:
+            artist_link = (
+                f"<a href='{c.artist_url}'>{html.escape(c.artist_name)}</a>"
+                if c.artist_url
+                else html.escape(c.artist_name)
+            )
+            lines.append(f"👑 {artist_link} — <b>{c.playcount:,}</b> scrobbles")
+
+        return emojize(
+            responses.user_crowns_list.substitute(
+                display_name=display_name,
+                chat_name=html.escape(chat_name or "this chat"),
+                crown_count=len(crowns),
+                crowns_list="\n".join(lines),
+            )
+        )
+

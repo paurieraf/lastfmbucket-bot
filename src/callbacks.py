@@ -38,8 +38,10 @@ class Action(StrEnum):
     NP_LESS_COVER = "nc"
     NP_MORE = "nm"
     PREF_UNLINK = "pu"
+    PREF_OPT_OUT = "po"
     TOPS = "t"
     COLLAGE = "cl"
+    WHOKNOWS = "wk"
 
 
 class Entity(StrEnum):

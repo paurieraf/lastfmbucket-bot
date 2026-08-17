@@ -21,7 +21,14 @@ import db
 import lastfm
 import responses
 from callbacks import Action, Callback
-from services import CollageOptions, CollageService, ViewService, parse_collage_args
+from services import (
+    CollageOptions,
+    CollageService,
+    GroupService,
+    LastfmService,
+    ViewService,
+    parse_collage_args,
+)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -75,6 +82,10 @@ COMPARE_COMMAND = "compare"
 VIBE_COMMAND = "vibe"
 ROAST_COMMAND = "roast"
 RECOMMEND_COMMAND = "recommend"
+WHOKNOWS_COMMAND = "whoknows"
+WK_ALIAS = "wk"
+CROWNS_COMMAND = "crowns"
+MYCROWNS_ALIAS = "mycrowns"
 
 # Public bot commands registered with Telegram UI
 BOT_COMMANDS: list[BotCommand] = [
@@ -82,6 +93,8 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(STATUS_COMMAND, "Show recent scrobbles"),
     BotCommand(TOPS_COMMAND, "Show top artists, albums, or tracks"),
     BotCommand(COLLAGE_COMMAND, "Generate visual collage of your top items"),
+    BotCommand(WHOKNOWS_COMMAND, "Show who in this chat listens to an artist"),
+    BotCommand(CROWNS_COMMAND, "Show group crowns hall of fame or user crowns"),
     BotCommand(SET_COMMAND, "Link your Last.fm username"),
     BotCommand(COMPARE_COMMAND, "Compare listening stats with another user"),
     BotCommand(VIBE_COMMAND, "AI analysis of your current vibe"),
@@ -237,13 +250,50 @@ async def _handle_collage(
         await _edit_message_text(query, response, reply_markup)
 
 
+async def _handle_pref_opt_out(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    query = update.callback_query
+    if not query:
+        return
+    view_service: ViewService = context.bot_data["view_service"]
+    msg = view_service.build_preferences_toggle_opt_out_response(cb.owner_id)
+    text, reply_markup = await view_service.build_preferences_response(cb.owner_id)
+    await _edit_message_text(query, text=f"{text}\n\n{msg}", reply_markup=reply_markup)
+
+
+async def _handle_whoknows_button(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cb: Callback
+) -> None:
+    query = update.callback_query
+    if not query or not update.effective_chat:
+        return
+    lastfm_service: LastfmService = context.bot_data["lastfm_service"]
+    group_service: GroupService = context.bot_data["group_service"]
+
+    user, track = await lastfm_service.get_now_playing(cb.owner_id)
+    if not track or not track.artist:
+        await query.answer("Could not determine current artist from Now Playing.", show_alert=True)
+        return
+
+    artist_name = track.artist.name if hasattr(track.artist, "name") else str(track.artist)
+    chat_id = update.effective_chat.id
+    chat_name = update.effective_chat.title or update.effective_chat.username or "this chat"
+
+    response_text, _ = await group_service.get_whoknows(chat_id, chat_name, artist_name)
+    if update.effective_message:
+        await update.effective_message.reply_text(response_text)
+
+
 CALLBACK_ROUTES = {
     Action.NP_LESS: _handle_np_less,
     Action.NP_LESS_COVER: _handle_np_less_cover,
     Action.NP_MORE: _handle_np_more,
     Action.PREF_UNLINK: _handle_pref_unlink,
+    Action.PREF_OPT_OUT: _handle_pref_opt_out,
     Action.TOPS: _handle_tops,
     Action.COLLAGE: _handle_collage,
+    Action.WHOKNOWS: _handle_whoknows_button,
 }
 
 
@@ -800,3 +850,113 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await status_msg.delete()
         except Exception:
             pass
+
+
+@log_command(WHOKNOWS_COMMAND)
+async def whoknows(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shows who in the current chat listens to a specific artist."""
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not message or not chat or not user:
+        return
+
+    group_service: GroupService = context.bot_data["group_service"]
+    lastfm_service: LastfmService = context.bot_data["lastfm_service"]
+    chat_id = chat.id
+    chat_name = chat.title or chat.username or "this chat"
+
+    artist_query = ""
+    if context.args:
+        artist_query = " ".join(context.args).strip()
+    elif message.reply_to_message and message.reply_to_message.text:
+        reply_text = message.reply_to_message.text.strip()
+        if "🎧" in reply_text and "—" in reply_text:
+            try:
+                part = reply_text.split("🎧")[1].split("—")[0].strip()
+                artist_query = part
+            except Exception:
+                artist_query = reply_text
+        else:
+            artist_query = reply_text
+    else:
+        # Fallback to caller's Now Playing track
+        _, track = await lastfm_service.get_now_playing(user.id)
+        if track and track.artist:
+            artist_query = (
+                track.artist.name
+                if hasattr(track.artist, "name")
+                else str(track.artist)
+            )
+
+    if not artist_query:
+        await message.reply_text(
+            emojize(responses.whoknows_specify_artist.substitute())
+        )
+        return
+
+    try:
+        await context.bot.send_chat_action(
+            chat_id=chat_id,
+            action=telegram.constants.ChatAction.TYPING,
+        )
+    except Exception:
+        pass
+
+    response_text, _ = await group_service.get_whoknows(
+        chat_id, chat_name, artist_query
+    )
+    await message.reply_text(response_text)
+
+
+@log_command(CROWNS_COMMAND)
+async def crowns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shows group crowns hall of fame or crowns held by a specific user."""
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not message or not chat or not user:
+        return
+
+    group_service: GroupService = context.bot_data["group_service"]
+    chat_id = chat.id
+    chat_name = chat.title or chat.username or "this chat"
+
+    # Check if command is /mycrowns
+    is_mycrowns = bool(
+        message.text and message.text.startswith(f"/{MYCROWNS_ALIAS}")
+    )
+
+    if is_mycrowns:
+        caller_user = db.get_user(user.id)
+        if not caller_user:
+            await message.reply_text(emojize(responses.user_not_found.substitute()))
+            return
+        response_text = await group_service.get_user_crowns_showcase(
+            chat_id, chat_name, caller_user
+        )
+        await message.reply_text(response_text)
+        return
+
+    if context.args:
+        target_arg = context.args[0].strip()
+        target_user = db.get_user_by_username(target_arg)
+        if not target_user and target_arg.isdigit():
+            target_user = db.get_user(int(target_arg))
+
+        if not target_user:
+            await message.reply_text(
+                f"🔎 No user found for: {html.escape(target_arg)}. Make sure they have interacted with the bot."
+            )
+            return
+
+        response_text = await group_service.get_user_crowns_showcase(
+            chat_id, chat_name, target_user
+        )
+        await message.reply_text(response_text)
+        return
+
+    # No arguments -> Show group Hall of Fame
+    response_text = await group_service.get_crowns_hall_of_fame(chat_id, chat_name)
+    await message.reply_text(response_text)
+

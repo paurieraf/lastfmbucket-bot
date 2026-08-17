@@ -130,3 +130,54 @@ compare_user_not_found = Template("""
 compare_no_lastfm_set = Template("""
 🔎 You need to set your Last.fm username first. Use /set [username]
 """)
+
+whoknows_ranking = Template("""\
+👑 <b>Who knows <a href="$artist_url">$artist_name</a> in $chat_name?</b>$dethroned_banner
+
+$ranking_list
+
+📊 <b>Group Total:</b> $total_plays scrobbles · $listeners_count listeners
+""")
+
+whoknows_no_listeners = Template("""\
+👑 Nobody in <b>$chat_name</b> has listened to <b><a href="$artist_url">$artist_name</a></b> yet!
+""")
+
+whoknows_artist_not_found = Template("""\
+🚫 Could not find artist: <b>$artist_name</b> on Last.fm.
+""")
+
+whoknows_no_members = Template("""\
+🔎 No linked Last.fm users found in this chat yet. Use /set [username] to link your account!
+""")
+
+whoknows_specify_artist = Template("""\
+🔎 Please specify an artist name: <code>/whoknows Radiohead</code>, reply to a music message with <code>/wk</code>, or play a track to use your current Now Playing!
+""")
+
+crowns_leaderboard = Template("""\
+🏆 <b>Crowns Hall of Fame — $chat_name</b>
+
+$leaderboard_list
+""")
+
+crowns_no_crowns = Template("""\
+🏆 No crowns awarded in <b>$chat_name</b> yet!
+Use /whoknows [artist] to discover the group leaders and claim crowns 👑
+""")
+
+user_crowns_list = Template("""\
+👑 <b>Crowns held by $display_name in $chat_name ($crown_count):</b>
+
+$crowns_list
+""")
+
+user_no_crowns = Template("""\
+👑 $display_name does not hold any crowns in <b>$chat_name</b> yet.
+Keep scrobbling and use /whoknows to claim them!
+""")
+
+preferences_opt_out_updated = Template("""\
+🔒 Group ranking visibility updated: <b>$status</b>
+""")
+

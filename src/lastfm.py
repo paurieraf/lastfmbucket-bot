@@ -41,11 +41,46 @@ class LastfmClient:
         now_playing = self.client.get_user(username).get_now_playing()
         return now_playing
 
-    def get_recent_tracks(self, username: str, limit=int) -> list[PlayedTrack]:
+    def get_recent_tracks(self, username: str, limit: int = 10) -> list[PlayedTrack]:
         recent_tracks = self.client.get_user(username).get_recent_tracks(
             now_playing=True, limit=limit
         )
         return recent_tracks
+
+    def get_artist_canonical_info(self, artist_name: str) -> tuple[str, str] | None:
+        """
+        Validates an artist with Last.fm and retrieves canonical name and web URL.
+        Returns (canonical_name, url) or None if artist not found.
+        """
+        import urllib.parse
+
+        try:
+            artist = self.client.get_artist(artist_name.strip())
+            canonical_name = artist.get_name()
+            if not canonical_name:
+                canonical_name = artist_name.strip()
+            try:
+                url = artist.get_url()
+            except Exception:
+                url = f"https://www.last.fm/music/{urllib.parse.quote_plus(canonical_name)}"
+            return canonical_name, url
+        except Exception as e:
+            logger.warning(f"Failed to resolve artist '{artist_name}': {e}")
+            return None
+
+    def get_user_artist_playcount(self, username: str, artist_name: str) -> int:
+        """
+        Retrieves total scrobbles for a specific artist by a specific Last.fm user.
+        """
+        try:
+            artist = pylast.Artist(
+                artist_name, self.client, username=username.strip()
+            )
+            count = artist.get_userplaycount()
+            return int(count) if count is not None else 0
+        except Exception as e:
+            logger.debug(f"Error fetching playcount for {username} - {artist_name}: {e}")
+            return 0
 
     def get_user_stats(self, username: str) -> dict | None:
         """Get comprehensive stats for a user."""

@@ -67,37 +67,41 @@ The bot engine is located in `src/bot.py`, `src/commands.py`, `src/callbacks.py`
 - **Dependency Injection:** `LastfmService`, `ViewService`, and `CollageService` instances are attached to `app.bot_data` during startup and accessed inside handler routines via `context.bot_data["view_service"]` and `context.bot_data["collage_service"]`.
 - **Command Logging Middleware:** Commands are decorated with `@log_command(command_name)`. It records caller `user_id`, `username`, arguments `context.args`, and chat context (`chat_id`, `chat_type`, `chat_name`) to SQLite via `db.log_command()`.
 
-#### 2. Complete Command Matrix (14 Commands)
+#### 2. Complete Command Matrix (15 Commands)
 
 | # | Command | Handler Function | Purpose & Execution Flow | Output Format |
 |---|---|---|---|---|
 | 1 | `/start` | `start` (`commands.py:235`) | Welcomes user; checks if user is linked in SQLite; prompts `/set` if missing. | Plain text (`string.Template`) |
 | 2 | `/set` | `lastfm_username_set` (`commands.py:285`) | Links caller's Telegram ID to Last.fm username via `LastfmService.set_lastfm_username`. | HTML confirmation / error |
-| 3 | `/np` | `now_playing` (`commands.py:249`) | Queries currently playing track; generates view with `More info` and `🖼️ Cover` buttons. | HTML + Inline Keyboard |
+| 3 | `/np` | `now_playing` (`commands.py:249`) | Queries currently playing track; generates view with `More info`, `🖼️ Cover` and `👑 Qui ho coneix?` buttons. | HTML + Inline Keyboard |
 | 4 | `/status` | `status` (`commands.py:310`) | Shows recent 5 tracks with relative timestamps (`humanize`); includes `Less info` and `🖼️ Cover` buttons. | HTML + Inline Keyboard |
 | 5 | `/tops` | `tops` (`commands.py:342`) | Multi-tier interactive top charts (Artist/Album/Track over 7d/1m/3m/6m/1y/overall) or direct args parser (`_parse_tops_args`). | HTML List (Top 10) or 2-Tier Keyboard |
 | 6 | `/collage` | `collage` (`commands.py:426`) | Generates composite collage photo (1x1 to 20x20, max 400 tiles, dynamic resolution, optional `tile_size`) using `lastfmcollagegenerator`. | Photo with HTML caption or 3-Tier Keyboard |
-| 7 | `/compare` | `compare` (`commands.py:580`) | Compares listening stats, scrobble count, top artists, and common artists between caller and target. | HTML summary table |
-| 8 | `/preferences` | `preferences` (`commands.py:501`) | Displays user settings and account management inline actions. | HTML + `Unlink account` Button |
-| 9 | `/help` | `help_command` (`commands.py:533`) | Fetches bot description dynamically from Telegram Bot API via `context.bot.get_my_description()`. | Plain text with emoji conversion |
-| 10 | `/changelog` | `changelog` (`commands.py:548`) | Reads `CHANGELOG.md` file (truncated to 4000 characters). | HTML `<pre>` code block |
-| 11 | `/privacy` | `privacy` (`commands.py:564`) | Displays GDPR and data privacy policy. | HTML formatted text |
-| 12 | `/vibe` | `vibe` (`commands.py:603`) | Analyzes last 10 scrobbles + current track using Ollama (`generate_vibe`). | Markdown AI response |
-| 13 | `/roast` | `roast` (`commands.py:654`) | Generates humorous critique of user's overall top 10 artists and top 5 tracks via Ollama (`generate_roast`). | Markdown AI response |
-| 14 | `/recommend` | `recommend` (`commands.py:711`) | Generates 5 lesser-known artist recommendations from top 10 artists via Ollama (`generate_recommendations`). | Markdown AI response |
+| 7 | `/whoknows` | `whoknows` (`commands.py:850`) | Compares playcounts for a specific artist across group members with canonical URL and dethronements (alias: `/wk`). | HTML podium list with crown |
+| 8 | `/crowns` | `crowns` (`commands.py:890`) | Displays chat crowns Hall of Fame or crowns held by a specific user (alias: `/mycrowns`). | HTML leaderboard / showcase |
+| 9 | `/compare` | `compare` (`commands.py:580`) | Compares listening stats, scrobble count, top artists, and common artists between caller and target. | HTML summary table |
+| 10 | `/preferences` | `preferences` (`commands.py:501`) | Displays user settings, group privacy toggle, and account management inline actions. | HTML + Interactive Buttons |
+| 11 | `/help` | `help_command` (`commands.py:533`) | Fetches bot description dynamically from Telegram Bot API via `context.bot.get_my_description()`. | Plain text with emoji conversion |
+| 12 | `/changelog` | `changelog` (`commands.py:548`) | Reads `CHANGELOG.md` file (truncated to 4000 characters). | HTML `<pre>` code block |
+| 13 | `/privacy` | `privacy` (`commands.py:564`) | Displays GDPR and data privacy policy. | HTML formatted text |
+| 14 | `/vibe` | `vibe` (`commands.py:603`) | Analyzes last 10 scrobbles + current track using Ollama (`generate_vibe`). | Markdown AI response |
+| 15 | `/roast` | `roast` (`commands.py:654`) | Generates humorous critique of user's overall top 10 artists and top 5 tracks via Ollama (`generate_roast`). | Markdown AI response |
+| 16 | `/recommend` | `recommend` (`commands.py:711`) | Generates 5 lesser-known artist recommendations from top 10 artists via Ollama (`generate_recommendations`). | Markdown AI response |
 
 #### 3. Compact Callback Query Protocol (`src/callbacks.py`)
 Telegram enforces a strict **64-byte payload limit** on `InlineKeyboardButton.callback_data`. `src/callbacks.py` implements a versioned, delimited protocol that packs state and owner identity into ~20-30 bytes:
 
-$$\text{Callback Wire Format: } \texttt{v|action|owner\_id|entity|period|size}$$
+$$\text{Callback Wire Format: } \texttt{v|action|owner\_id|entity|period|size|theme|overlay|preset|style}$$
 
 - **Components:**
   - `v`: Protocol version (`"1"`).
-  - `action`: Short action identifier from `Action` enum (`nl`, `nc`, `nm`, `pu`, `t`, `cl`).
+  - `action`: Short action identifier from `Action` enum (`nl`, `nc`, `nm`, `pu`, `po`, `t`, `cl`, `wk`).
   - `owner_id`: Target Telegram user ID (`int`). **Critical**: In group chats, buttons retain the identity of the user who initiated the query, preventing group members from hijacking or mutating each other's views.
   - `entity`: Optional short code from `Entity` enum (`a` = Artist, `b` = Album, `t` = Track).
   - `period`: Optional short code from `Period` enum (`w` = 7 days, `1` = 1 month, `3` = 3 months, `6` = 6 months, `y` = 1 year, `o` = Overall).
   - `size`: Optional size string (e.g. `3x3`, `5x5`, `10x10`).
+  - `theme`: Optional visual theme (`neon`, `glassmorphic`, `sunset`, `dark`).
+  - `overlay`: Optional title banner overlay style (`banner`, `pill`, `clean`, `full_tint`, `gradient`).
 
 - **Action Enum & Routing Table:**
 
@@ -107,8 +111,10 @@ $$\text{Callback Wire Format: } \texttt{v|action|owner\_id|entity|period|size}$$
 | `Action.NP_LESS_COVER` | `nc` | `_handle_np_less_cover` | Converts Now Playing view into photo message with album cover art attached (`InputMediaPhoto`). |
 | `Action.NP_MORE` | `nm` | `_handle_np_more` | Expands Now Playing view into full 5-track status list with cover art. |
 | `Action.PREF_UNLINK` | `pu` | `_handle_pref_unlink` | Deletes user mapping from SQLite and confirms unlinking. |
+| `Action.PREF_OPT_OUT` | `po` | `_handle_pref_opt_out` | Toggles user group ranking visibility in SQLite. |
 | `Action.TOPS` | `t` | `_handle_tops` | Navigates the tops decision tree (Entity Selection $\to$ Period Selection $\to$ Top 10 Display). |
-| `Action.COLLAGE` | `cl` | `_handle_collage` | Navigates the interactive collage builder (Entity $\to$ Size $\to$ Period $\to$ Image Generation). |
+| `Action.COLLAGE` | `cl` | `_handle_collage` | Navigates the interactive collage builder (Entity $\to$ Size $\to$ Period $\to$ Style $\to$ Image Generation). |
+| `Action.WHOKNOWS` | `wk` | `_handle_whoknows_button` | Triggers WhoKnows ranking for the currently playing artist from `/np`. |
 
 ---
 
@@ -126,6 +132,7 @@ db = SqliteExtDatabase(
         "foreign_keys": 1,              # Enforce relational integrity
         "ignore_check_constraints": 0,  # Enforce check constraints
         "synchronous": 0,               # synchronous OFF (Performance-first, see Gap Analysis)
+        "busy_timeout": 5000,           # Wait up to 5s on lock contention (admin process shares DB)
     },
 )
 ```
@@ -139,6 +146,7 @@ erDiagram
         bigint telegram_id UK "Unique Telegram user ID"
         varchar telegram_username "Telegram handle (cached)"
         varchar lastfm_username "Last.fm username"
+        boolean group_opt_out "Group ranking privacy setting"
     }
 
     Chat {
@@ -150,15 +158,37 @@ erDiagram
 
     CommandLog {
         int id PK
-        bigint user_id "Telegram user ID"
-        varchar username "Telegram handle at time of command"
-        varchar command "e.g. np, tops, vibe, roast"
+        bigint user_id "Telegram user ID (not FK)"
+        varchar username "Telegram @handle at time of command"
+        varchar command "e.g. np, tops, vibe, whoknows"
         varchar args "Command arguments string"
-        int chat_id FK "References Chat.id"
+        int chat_id FK "References Chat"
         bigint timestamp "Unix epoch timestamp"
     }
 
+    ChatMember {
+        int id PK
+        int chat_id FK "References Chat"
+        int user_id FK "References User"
+        bigint last_active "Timestamp of last interaction"
+        boolean opt_out "Chat-specific privacy opt-out"
+    }
+
+    Crown {
+        int id PK
+        int chat_id FK "References Chat"
+        varchar artist_name "Canonical artist name (index)"
+        varchar artist_url "Last.fm artist web page URL"
+        int user_id FK "References User (Current #1 Leader)"
+        bigint playcount "Leader's total scrobbles"
+        bigint updated_at "Timestamp of crown assignment"
+    }
+
     Chat ||--o{ CommandLog : "has"
+    Chat ||--o{ ChatMember : "has members"
+    User ||--o{ ChatMember : "belongs to"
+    Chat ||--o{ Crown : "has crowns"
+    User ||--o{ Crown : "holds"
 ```
 
 - **`User` (`user` table)**: Maps Telegram unique ID (`telegram_id`) to Last.fm username (`lastfm_username`) and cached `@handle` (`telegram_username`).

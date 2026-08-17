@@ -202,16 +202,18 @@ docker compose logs -f admin
 ```
 /start              — Welcome message & onboarding
 /set <username>     — Link your Last.fm account
-/np                 — Now playing track (+ album art button)
+/np                 — Now playing track (+ album art & crown buttons)
 /status             — Last 5 scrobbles with timestamps
 /tops               — Interactive top charts (Artists/Albums/Tracks × 6 periods)
 /tops artists week  — Direct shortcut: top artists this week
 /collage            — Visual collage grid (interactive or e.g. /collage 5x5 overall artist)
+/whoknows <artist>  — Show who in the chat listens to an artist & crown leader (alias: /wk)
+/crowns [@user]     — Group crowns Hall of Fame or user crowns (alias: /mycrowns)
 /compare <user>     — Compare your taste with another Last.fm user
 /vibe               — AI mood analysis of your recent listening
 /roast              — AI humorously critiques your music taste
 /recommend          — AI suggests 5 lesser-known artists you might love
-/preferences        — Account settings & unlink option
+/preferences        — Account settings, group privacy toggle & unlink option
 /privacy            — Data privacy policy
 /help               — Bot description & command overview
 /changelog          — Latest release notes
@@ -241,12 +243,12 @@ See [`Caddyfile`](Caddyfile) and [`docker-compose.yml`](docker-compose.yml) for 
 lastfmbucket-bot/
 ├── src/
 │   ├── bot.py          # Bot entrypoint: ApplicationBuilder, handler registration
-│   ├── commands.py     # 13 command handlers + callback router
+│   ├── commands.py     # 15 command handlers + callback router
 │   ├── callbacks.py    # 64-byte compact callback query protocol
-│   ├── services.py     # LastfmService (domain) + ViewService (presentation)
+│   ├── services.py     # LastfmService + ViewService + CollageService + GroupService
 │   ├── lastfm.py       # pylast client wrapper (LastfmClient)
 │   ├── ai.py           # Ollama LLM client (vibe / roast / recommend)
-│   ├── db.py           # Peewee ORM models + CRUD operations
+│   ├── db.py           # Peewee ORM models (User, Chat, CommandLog, ChatMember, Crown)
 │   ├── admin.py        # NiceGUI admin dashboard (5 routes)
 │   ├── config.py       # Environment variable loading
 │   └── responses.py    # HTML/text response templates

@@ -16,7 +16,7 @@ import ai
 import commands
 import config
 from lastfm import LastfmClient
-from services import CollageService, LastfmService, ViewService
+from services import CollageService, GroupService, LastfmService, ViewService
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -73,11 +73,13 @@ def main() -> None:
     # Initialize services
     lastfm_client = LastfmClient()
     lastfm_service = LastfmService(lastfm_client)
+    group_service = GroupService(lastfm_client)
     view_service = ViewService(lastfm_service)
     collage_service = CollageService(config.LASTFM_API_KEY, config.LASTFM_API_SECRET)
 
     # Add services to bot_data
     app.bot_data["lastfm_service"] = lastfm_service
+    app.bot_data["group_service"] = group_service
     app.bot_data["view_service"] = view_service
     app.bot_data["collage_service"] = collage_service
 
@@ -87,6 +89,10 @@ def main() -> None:
     app.add_handler(CommandHandler(commands.NOW_PLAYING_COMMAND, commands.now_playing))
     app.add_handler(CommandHandler(commands.TOPS_COMMAND, commands.tops))
     app.add_handler(CommandHandler(commands.COLLAGE_COMMAND, commands.collage))
+    app.add_handler(CommandHandler(commands.WHOKNOWS_COMMAND, commands.whoknows))
+    app.add_handler(CommandHandler(commands.WK_ALIAS, commands.whoknows))
+    app.add_handler(CommandHandler(commands.CROWNS_COMMAND, commands.crowns))
+    app.add_handler(CommandHandler(commands.MYCROWNS_ALIAS, commands.crowns))
     app.add_handler(CommandHandler(commands.PREFERENCES_COMMAND, commands.preferences))
     app.add_handler(CommandHandler(commands.HELP_COMMAND, commands.help_command))
     app.add_handler(CommandHandler(commands.CHANGELOG_COMMAND, commands.changelog))

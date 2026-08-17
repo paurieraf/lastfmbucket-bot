@@ -510,5 +510,211 @@ class TestEditMessageText(unittest.IsolatedAsyncioTestCase):
             await commands._edit_message_text(mock_query, "hello", None)
 
 
+class TestDatabaseGroupAndCrowns(unittest.TestCase):
+    def setUp(self):
+        import db
+        self.db = db
+        self.orig_db = db.db
+        from playhouse.sqlite_ext import SqliteExtDatabase
+        self.test_db = SqliteExtDatabase(":memory:")
+        self.db.db = self.test_db
+        self.db.db.bind(self.db.MODELS, bind_refs=False, bind_backrefs=False)
+        self.test_db.connect()
+        self.test_db.create_tables(self.db.MODELS)
+
+    def tearDown(self):
+        self.test_db.drop_tables(self.db.MODELS)
+        self.test_db.close()
+        self.db.db = self.orig_db
+        self.orig_db.bind(self.db.MODELS, bind_refs=False, bind_backrefs=False)
+
+    def test_track_and_get_chat_members(self):
+        self.db.create_or_update_user(101, "alice", "alice_lfm")
+        self.db.create_or_update_user(102, "bob", "bob_lfm")
+        self.db.create_or_update_user(103, "charlie", "")  # unlinked
+
+        self.db.track_chat_member(-1001, 101, "alice", "Music Club", "supergroup")
+        self.db.track_chat_member(-1001, 102, "bob", "Music Club", "supergroup")
+        self.db.track_chat_member(-1001, 103, "charlie", "Music Club", "supergroup")
+
+        linked = self.db.get_linked_chat_members(-1001)
+        self.assertEqual(len(linked), 2)
+        linked_ids = [u.telegram_id for u in linked]
+        self.assertIn(101, linked_ids)
+        self.assertIn(102, linked_ids)
+        self.assertNotIn(103, linked_ids)
+
+    def test_opt_out_toggle(self):
+        self.db.create_or_update_user(201, "david", "david_lfm")
+        self.db.track_chat_member(-1002, 201, "david", "Test Chat", "group")
+
+        linked = self.db.get_linked_chat_members(-1002)
+        self.assertEqual(len(linked), 1)
+
+        # Toggle opt-out -> True
+        new_status = self.db.toggle_user_group_opt_out(201)
+        self.assertTrue(new_status)
+        linked_after = self.db.get_linked_chat_members(-1002)
+        self.assertEqual(len(linked_after), 0)
+
+        # Toggle opt-out -> False
+        new_status2 = self.db.toggle_user_group_opt_out(201)
+        self.assertFalse(new_status2)
+        linked_again = self.db.get_linked_chat_members(-1002)
+        self.assertEqual(len(linked_again), 1)
+
+    def test_upsert_crown_and_dethrone(self):
+        u1 = self.db.create_or_update_user(301, "eva", "eva_lfm")
+        u2 = self.db.create_or_update_user(302, "frank", "frank_lfm")
+
+        # Initial crown
+        crown1, prev1 = self.db.upsert_crown(
+            -1003, "Radiohead", "https://last.fm/music/Radiohead", u1, 500
+        )
+        self.assertIsNone(prev1)
+        self.assertEqual(crown1.playcount, 500)
+        self.assertEqual(crown1.user.telegram_id, 301)
+
+        # Dethrone by Frank
+        crown2, prev2 = self.db.upsert_crown(
+            -1003, "Radiohead", "https://last.fm/music/Radiohead", u2, 800
+        )
+        self.assertIsNotNone(prev2)
+        self.assertEqual(prev2.user.telegram_id, 301)
+        self.assertEqual(prev2.playcount, 500)
+        self.assertEqual(crown2.user.telegram_id, 302)
+        self.assertEqual(crown2.playcount, 800)
+
+    def test_crowns_leaderboard_and_user_crowns(self):
+        u1 = self.db.create_or_update_user(401, "grace", "grace_lfm")
+        u2 = self.db.create_or_update_user(402, "hector", "hector_lfm")
+
+        self.db.upsert_crown(-1004, "Artist A", "urlA", u1, 100)
+        self.db.upsert_crown(-1004, "Artist B", "urlB", u1, 200)
+        self.db.upsert_crown(-1004, "Artist C", "urlC", u2, 300)
+
+        leaderboard = self.db.get_chat_crowns_leaderboard(-1004)
+        self.assertEqual(len(leaderboard), 2)
+        self.assertEqual(leaderboard[0]["user"].telegram_id, 401)
+        self.assertEqual(leaderboard[0]["crown_count"], 2)
+        self.assertEqual(leaderboard[1]["user"].telegram_id, 402)
+        self.assertEqual(leaderboard[1]["crown_count"], 1)
+
+        grace_crowns = self.db.get_user_crowns(-1004, 401)
+        self.assertEqual(len(grace_crowns), 2)
+        self.assertEqual(grace_crowns[0].artist_name, "Artist B")  # higher playcount first
+
+
+class TestGroupService(unittest.IsolatedAsyncioTestCase):
+    async def test_get_whoknows_success(self):
+        mock_lfm = MagicMock()
+        mock_lfm.get_artist_canonical_info.return_value = (
+            "Radiohead",
+            "https://www.last.fm/music/Radiohead",
+        )
+
+        def mock_playcount(username, artist):
+            if username == "alice_lfm":
+                return 1500
+            elif username == "bob_lfm":
+                return 400
+            return 0
+
+        mock_lfm.get_user_artist_playcount.side_effect = mock_playcount
+
+        from services import GroupService
+
+        with patch("services.db.get_linked_chat_members") as mock_members, \
+             patch("services.db.upsert_crown") as mock_upsert:
+            u1 = MagicMock(telegram_id=1, telegram_username="alice", lastfm_username="alice_lfm")
+            u2 = MagicMock(telegram_id=2, telegram_username="bob", lastfm_username="bob_lfm")
+            mock_members.return_value = [u1, u2]
+            mock_upsert.return_value = (MagicMock(), None)
+
+            service = GroupService(mock_lfm)
+            html_msg, success = await service.get_whoknows(-999, "Indie Chat", "radiohead")
+
+            self.assertTrue(success)
+            self.assertIn("Radiohead", html_msg)
+            self.assertIn("@alice", html_msg)
+            self.assertIn("1,500", html_msg)
+            self.assertIn("👑", html_msg)
+
+    async def test_get_whoknows_artist_not_found(self):
+        mock_lfm = MagicMock()
+        mock_lfm.get_artist_canonical_info.return_value = None
+
+        from services import GroupService
+        service = GroupService(mock_lfm)
+        html_msg, success = await service.get_whoknows(-999, "Chat", "NonExistentBand123")
+
+        self.assertFalse(success)
+        self.assertIn("Could not find artist", html_msg)
+
+    async def test_get_whoknows_no_listeners(self):
+        mock_lfm = MagicMock()
+        mock_lfm.get_artist_canonical_info.return_value = ("Obscure Band", "https://url")
+        mock_lfm.get_user_artist_playcount.return_value = 0
+
+        from services import GroupService
+
+        with patch("services.db.get_linked_chat_members") as mock_members:
+            u1 = MagicMock(telegram_id=1, telegram_username="alice", lastfm_username="alice_lfm")
+            mock_members.return_value = [u1]
+
+            service = GroupService(mock_lfm)
+            html_msg, success = await service.get_whoknows(-999, "Chat", "Obscure Band")
+
+            self.assertTrue(success)
+            self.assertIn("Nobody in", html_msg)
+            self.assertIn("Obscure Band", html_msg)
+
+
+class TestWhoknowsAndCrownsCommands(unittest.IsolatedAsyncioTestCase):
+    @patch("commands.db.log_command")
+    async def test_whoknows_command_with_explicit_arg(self, mock_log_cmd):
+        mock_update = MagicMock(spec=Update)
+        mock_msg = MagicMock()
+        mock_msg.reply_text = AsyncMock()
+        mock_update.effective_message = mock_msg
+        mock_update.effective_chat = MagicMock(id=-555, title="Cool Group")
+        mock_update.effective_user = MagicMock(id=10, username="tester")
+
+        mock_context = MagicMock()
+        mock_context.args = ["Fontaines", "D.C."]
+        mock_group_svc = MagicMock()
+        mock_group_svc.get_whoknows = AsyncMock(return_value=("👑 Ranking HTML", True))
+        mock_context.bot_data = {
+            "group_service": mock_group_svc,
+            "lastfm_service": MagicMock(),
+        }
+        mock_context.bot.send_chat_action = AsyncMock()
+
+        await commands.whoknows(mock_update, mock_context)
+        mock_group_svc.get_whoknows.assert_awaited_once_with(-555, "Cool Group", "Fontaines D.C.")
+        mock_msg.reply_text.assert_awaited_once_with("👑 Ranking HTML")
+
+    @patch("commands.db.log_command")
+    async def test_crowns_command_hall_of_fame(self, mock_log_cmd):
+        mock_update = MagicMock(spec=Update)
+        mock_msg = MagicMock()
+        mock_msg.text = "/crowns"
+        mock_msg.reply_text = AsyncMock()
+        mock_update.effective_message = mock_msg
+        mock_update.effective_chat = MagicMock(id=-555, title="Cool Group")
+        mock_update.effective_user = MagicMock(id=10, username="tester")
+
+        mock_context = MagicMock()
+        mock_context.args = []
+        mock_group_svc = MagicMock()
+        mock_group_svc.get_crowns_hall_of_fame = AsyncMock(return_value="🏆 Hall of Fame HTML")
+        mock_context.bot_data = {"group_service": mock_group_svc}
+
+        await commands.crowns(mock_update, mock_context)
+        mock_group_svc.get_crowns_hall_of_fame.assert_awaited_once_with(-555, "Cool Group")
+        mock_msg.reply_text.assert_awaited_once_with("🏆 Hall of Fame HTML")
+
+
 if __name__ == "__main__":
     unittest.main()
+
