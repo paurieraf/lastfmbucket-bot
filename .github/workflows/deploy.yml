@@ -19,16 +19,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install system build dependencies for Pillow
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            zlib1g-dev \
-            libjpeg-dev \
-            libpng-dev \
-            libwebp-dev \
-            libfreetype6-dev
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
