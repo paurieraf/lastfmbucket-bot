@@ -6,10 +6,35 @@ from pylast import LastFMNetwork, PlayedTrack, Track, User
 
 import config
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
 logger = logging.getLogger(__name__)
+
+
+def compute_common_artists(
+    artists1: list[dict], artists2: list[dict], limit: int = 10
+) -> list[dict]:
+    """Compute common artists between two top-artist lists in memory."""
+    user2_by_key: dict[str, int] = {}
+    for artist in artists2:
+        key = artist["name"].lower()
+        if key not in user2_by_key:
+            user2_by_key[key] = int(artist["plays"])
+
+    common: list[dict] = []
+    seen: set[str] = set()
+    for artist in artists1:
+        key = artist["name"].lower()
+        if key in user2_by_key and key not in seen:
+            seen.add(key)
+            common.append(
+                {
+                    "name": artist["name"],
+                    "plays1": int(artist["plays"]),
+                    "plays2": user2_by_key[key],
+                }
+            )
+            if len(common) >= limit:
+                break
+    return common
 
 
 class Period(StrEnum):
@@ -106,6 +131,37 @@ class LastfmClient:
             logger.debug(f"Error fetching playcount for {username} - {artist_name}: {e}")
             return 0
 
+    def get_user_playcount(self, username: str) -> int | None:
+        """Get total scrobble count for a Last.fm user."""
+        clean_username = (username or "").strip()
+        if not clean_username:
+            return None
+        try:
+            playcount = self.client.get_user(clean_username).get_playcount()
+            return int(playcount) if playcount is not None else 0
+        except Exception as e:
+            logger.error(f"Error getting playcount for {clean_username}: {e}")
+            return None
+
+    def get_user_top_artists(
+        self, username: str, period: Period = Period.OVERALL, limit: int = 50
+    ) -> list[dict] | None:
+        """Get top artists for a Last.fm user as [{'name': str, 'plays': int}, ...]."""
+        clean_username = (username or "").strip()
+        if not clean_username:
+            return None
+        try:
+            top_artists = self.client.get_user(clean_username).get_top_artists(
+                period=period, limit=limit
+            )
+            return [
+                {"name": item.item.name, "plays": int(item.weight)}
+                for item in top_artists
+            ]
+        except Exception as e:
+            logger.error(f"Error getting top artists for {clean_username}: {e}")
+            return None
+
     def get_user_stats(self, username: str) -> dict | None:
         """Get comprehensive stats for a user."""
         try:
@@ -133,29 +189,12 @@ class LastfmClient:
         self, username1: str, username2: str, limit: int = 50
     ) -> list[dict]:
         """Find common artists between two users based on their top artists."""
-        try:
-            user1_artists = {
-                item.item.name.lower(): {"name": item.item.name, "plays": int(item.weight)}
-                for item in self.client.get_user(username1).get_top_artists(
-                    period=Period.OVERALL, limit=limit
-                )
-            }
-            user2_artists = {
-                item.item.name.lower(): int(item.weight)
-                for item in self.client.get_user(username2).get_top_artists(
-                    period=Period.OVERALL, limit=limit
-                )
-            }
-            common = [
-                {
-                    "name": user1_artists[name]["name"],
-                    "plays1": user1_artists[name]["plays"],
-                    "plays2": user2_artists[name],
-                }
-                for name in user1_artists
-                if name in user2_artists
-            ]
-            return common[:10]  # Return top 10 common artists
-        except Exception as e:
-            logger.error(f"Error getting common artists: {e}")
+        artists1 = self.get_user_top_artists(
+            username1, period=Period.OVERALL, limit=limit
+        )
+        artists2 = self.get_user_top_artists(
+            username2, period=Period.OVERALL, limit=limit
+        )
+        if artists1 is None or artists2 is None:
             return []
+        return compute_common_artists(artists1, artists2, limit=10)

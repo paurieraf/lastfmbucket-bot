@@ -11,7 +11,6 @@ import logging
 from typing import Callable, Optional
 
 import telegram.constants
-from dotenv import load_dotenv
 from emoji import emojize
 from telegram import BotCommand, Update
 from telegram.ext import ContextTypes
@@ -30,12 +29,7 @@ from services import (
     parse_collage_args,
 )
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 COLLAGE_SEMAPHORE = asyncio.Semaphore(2)
 
@@ -51,7 +45,8 @@ def log_command(command_name: str) -> Callable:
             user = update.effective_user
             chat = update.effective_chat
             if user:
-                db.log_command(
+                await asyncio.to_thread(
+                    db.log_command,
                     user_id=user.id,
                     username=user.username or "",
                     command=command_name,
@@ -359,11 +354,12 @@ async def track_group_member(
     if not user or not chat or user.is_bot:
         return
 
-    linked_user = db.get_linked_user(user.id)
+    linked_user = await asyncio.to_thread(db.get_linked_user, user.id)
     if not linked_user:
         return
 
-    db.track_chat_member(
+    await asyncio.to_thread(
+        db.track_chat_member,
         chat_id=chat.id,
         user_id=user.id,
         username=user.username or "",

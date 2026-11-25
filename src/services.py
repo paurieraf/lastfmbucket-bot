@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 import urllib.parse
 from dataclasses import dataclass
 from io import BytesIO
@@ -45,9 +46,6 @@ from callbacks import (
 )
 from lastfm import EntityType, LastfmClient, Period
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
 logger = logging.getLogger(__name__)
 
 LASTFM_SEMAPHORE = asyncio.Semaphore(config.LASTFM_MAX_CONCURRENT)
@@ -159,6 +157,19 @@ class LastfmService:
             tops = None
         return tops
 
+    async def get_user_playcount(self, username: str) -> int | None:
+        return await _run_lastfm_call(self._lastfm_client.get_user_playcount, username)
+
+    async def get_user_top_artists(
+        self, username: str, period: Period = Period.OVERALL, limit: int = 50
+    ) -> list[dict] | None:
+        return await _run_lastfm_call(
+            self._lastfm_client.get_user_top_artists,
+            username,
+            period=period,
+            limit=limit,
+        )
+
     async def get_user_stats(self, username: str) -> dict | None:
         return await _run_lastfm_call(self._lastfm_client.get_user_stats, username)
 
@@ -207,7 +218,7 @@ class ViewService:
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
         user, track = await self.lastfm_service.get_now_playing(telegram_user_id)
         if not user:
-            logging.warning(
+            logger.warning(
                 f"User with telegram_id {telegram_user_id} not found in the database"
             )
             response = responses.user_not_found.substitute()
@@ -219,9 +230,13 @@ class ViewService:
             )
             return emojize(response), None, None
 
-        album = track.get_album()
+        album = await _run_lastfm_call(track.get_album)
         track_album = album.title if album else ""
-        cover_image = album.get_cover_image() if (show_cover and album) else None
+        cover_image = (
+            await _run_lastfm_call(album.get_cover_image)
+            if (show_cover and album)
+            else None
+        )
         track_url = html.escape(track.get_url() or "", quote=True)
         track_artist = (
             track.artist.name if hasattr(track.artist, "name") else str(track.artist)
@@ -361,9 +376,13 @@ class ViewService:
         cover_url = None
         if show_cover:
             try:
-                last_played_track_album = last_played_track.get_album()
+                last_played_track_album = await _run_lastfm_call(
+                    last_played_track.get_album
+                )
                 if last_played_track_album:
-                    cover_url = last_played_track_album.get_cover_image()
+                    cover_url = await _run_lastfm_call(
+                        last_played_track_album.get_cover_image
+                    )
             except Exception:
                 pass  # Track not found or no album info
 
@@ -493,7 +512,9 @@ class ViewService:
     async def build_changelog_response() -> str:
         """Builds the changelog response by reading CHANGELOG.md."""
         try:
-            changelog_content = config.CHANGELOG_PATH.read_text(encoding="utf-8")
+            changelog_content = await asyncio.to_thread(
+                config.CHANGELOG_PATH.read_text, encoding="utf-8"
+            )
             escaped = html.escape(changelog_content)
             suffix = "\n\n... (truncated)"
             if len(escaped) + len("<pre></pre>") > 4096:
@@ -567,26 +588,27 @@ class ViewService:
         if not user:
             return emojize(responses.compare_no_lastfm_set.substitute())
 
-        my_stats, other_stats, common_artists = await asyncio.gather(
-            self.lastfm_service.get_user_stats(user.lastfm_username),
-            self.lastfm_service.get_user_stats(other_lastfm_username),
-            self.lastfm_service.get_common_artists(
-                user.lastfm_username, other_lastfm_username
-            ),
+        playcount1, artists1, playcount2, artists2 = await asyncio.gather(
+            self.lastfm_service.get_user_playcount(user.lastfm_username),
+            self.lastfm_service.get_user_top_artists(user.lastfm_username, limit=50),
+            self.lastfm_service.get_user_playcount(other_lastfm_username),
+            self.lastfm_service.get_user_top_artists(other_lastfm_username, limit=50),
         )
 
-        if not my_stats:
+        if playcount1 is None or artists1 is None:
             return emojize(
                 responses.compare_user_not_found.substitute(
                     username=html.escape(user.lastfm_username)
                 )
             )
-        if not other_stats:
+        if playcount2 is None or artists2 is None:
             return emojize(
                 responses.compare_user_not_found.substitute(
                     username=html.escape(other_lastfm_username)
                 )
             )
+
+        common_artists = lastfm.compute_common_artists(artists1, artists2, limit=10)
 
         if common_artists:
             common_artists_text = "\n".join(
@@ -597,19 +619,17 @@ class ViewService:
             common_artists_text = "None found"
 
         top_artists1_text = ", ".join(
-            f"{html.escape(a['name'])} ({a['plays']:,})"
-            for a in my_stats["top_artists"][:3]
+            f"{html.escape(a['name'])} ({a['plays']:,})" for a in artists1[:3]
         )
         top_artists2_text = ", ".join(
-            f"{html.escape(a['name'])} ({a['plays']:,})"
-            for a in other_stats["top_artists"][:3]
+            f"{html.escape(a['name'])} ({a['plays']:,})" for a in artists2[:3]
         )
 
         response = responses.compare_stats.substitute(
-            user1=html.escape(my_stats["username"]),
-            user2=html.escape(other_stats["username"]),
-            playcount1=f"{my_stats['playcount']:,}",
-            playcount2=f"{other_stats['playcount']:,}",
+            user1=html.escape(user.lastfm_username),
+            user2=html.escape(other_lastfm_username),
+            playcount1=f"{playcount1:,}",
+            playcount2=f"{playcount2:,}",
             common_count=len(common_artists),
             common_artists=common_artists_text,
             top_artists1=top_artists1_text,
@@ -1206,20 +1226,134 @@ class CollageService:
     A service class to handle collage generation using lastfmcollagegenerator.
     """
 
-    DEFAULT_CACHE_DIR = config.PROJECT_ROOT / "data" / "collage_cache"
+    DEFAULT_CACHE_DIR = config.COLLAGE_CACHE_DIR
 
     def __init__(
         self,
         api_key: str | None = None,
         api_secret: str | None = None,
         cache_dir: str | None = None,
+        cache_max_age_days: float | None = None,
+        cache_max_mb: float | None = None,
+        cleanup_interval_seconds: float | None = None,
     ):
         key = api_key or config.LASTFM_API_KEY or ""
         secret = api_secret or config.LASTFM_API_SECRET or ""
-        cache_dir = cache_dir or str(self.DEFAULT_CACHE_DIR)
+        cache_dir = str(cache_dir or self.DEFAULT_CACHE_DIR)
         os.makedirs(cache_dir, exist_ok=True)
         self._cache_dir = cache_dir
+        self._cache_max_age_seconds = (
+            config.COLLAGE_CACHE_TTL_DAYS
+            if cache_max_age_days is None
+            else cache_max_age_days
+        ) * 86400.0
+        self._cache_max_bytes = int(
+            (config.COLLAGE_CACHE_MAX_MB if cache_max_mb is None else cache_max_mb)
+            * 1024
+            * 1024
+        )
+        self._cleanup_interval = (
+            config.COLLAGE_CACHE_CLEANUP_INTERVAL_SECONDS
+            if cleanup_interval_seconds is None
+            else cleanup_interval_seconds
+        )
+        self._last_cleanup: float | None = None
         self._generator = CollageGenerator(lastfm_api_key=key, lastfm_api_secret=secret)
+
+    @staticmethod
+    def _export_collage_to_bytes(image, export_format: str) -> BytesIO:
+        """Export a PIL image via temp file and return a positioned BytesIO stream."""
+        target_fmt = export_format
+        ext = target_fmt.lower()
+        if ext == "jpg":
+            ext = "jpeg"
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            try:
+                export_image(image, tmp_path, format=target_fmt)
+            except (KeyError, Exception) as exp_err:
+                logger.warning(
+                    f"Export with format '{target_fmt}' failed ({exp_err}); falling back to PNG."
+                )
+                target_fmt = "PNG"
+                ext = "png"
+                export_image(image, tmp_path, format="PNG")
+            with open(tmp_path, "rb") as f:
+                bio = BytesIO(f.read())
+            bio.name = f"collage.{ext}"
+            bio.seek(0)
+            return bio
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _cleanup_cache_sync(
+        cache_dir: str, max_age_seconds: float, max_bytes: int
+    ) -> int:
+        """Evict expired and oversized collage cache files from disk."""
+        now = time.time()
+        deleted = 0
+        remaining: list[tuple[float, int, str]] = []
+
+        for root, _dirs, files in os.walk(cache_dir):
+            for filename in files:
+                path = os.path.join(root, filename)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+
+                if max_age_seconds >= 0 and (now - st.st_mtime) > max_age_seconds:
+                    try:
+                        os.remove(path)
+                        deleted += 1
+                    except OSError:
+                        pass
+                else:
+                    remaining.append((st.st_mtime, st.st_size, path))
+
+        total_size = sum(size for _, size, _ in remaining)
+        if max_bytes >= 0 and total_size > max_bytes:
+            remaining.sort(key=lambda item: item[0])
+            for _mtime, size, path in remaining:
+                if total_size <= max_bytes:
+                    break
+                try:
+                    os.remove(path)
+                    total_size -= size
+                    deleted += 1
+                except OSError:
+                    pass
+
+        if deleted > 0:
+            logger.info(f"Evicted {deleted} collage cache file(s) from {cache_dir}")
+        return deleted
+
+    async def maybe_cleanup_cache(self) -> int:
+        """Run throttled off-thread cache cleanup when the cleanup interval has elapsed."""
+        now = time.monotonic()
+        if (
+            self._last_cleanup is not None
+            and (now - self._last_cleanup) < self._cleanup_interval
+        ):
+            return 0
+
+        self._last_cleanup = now
+        try:
+            return await asyncio.to_thread(
+                self._cleanup_cache_sync,
+                self._cache_dir,
+                self._cache_max_age_seconds,
+                self._cache_max_bytes,
+            )
+        except Exception as e:
+            logger.warning(f"Collage cache cleanup failed: {e}")
+            return 0
 
     async def generate_collage_image(
         self, username: str, options: CollageOptions, export_format: str = "WEBP"
@@ -1237,33 +1371,11 @@ class CollageService:
             cache_dir=self._cache_dir,
             **options.build_kwargs(),
         )
-        target_fmt = export_format
-        ext = target_fmt.lower()
-        if ext == "jpg":
-            ext = "jpeg"
-        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
-            tmp_path = tmp.name
-        try:
-            try:
-                export_image(image, tmp_path, format=target_fmt)
-            except (KeyError, Exception) as exp_err:
-                logging.warning(
-                    f"Export with format '{target_fmt}' failed ({exp_err}); falling back to PNG."
-                )
-                target_fmt = "PNG"
-                ext = "png"
-                export_image(image, tmp_path, format="PNG")
-            with open(tmp_path, "rb") as f:
-                bio = BytesIO(f.read())
-            bio.name = f"collage.{ext}"
-            bio.seek(0)
-            return bio
-        finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+        bio = await asyncio.to_thread(
+            self._export_collage_to_bytes, image, export_format
+        )
+        await self.maybe_cleanup_cache()
+        return bio
 
 
 class GroupService:

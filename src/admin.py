@@ -12,21 +12,19 @@ import os
 import secrets
 import time
 
-from dotenv import load_dotenv
 from nicegui import Client, app, ui
 from peewee import JOIN
 
-load_dotenv()
-
-from db import Chat, ChatMember, CommandLog, Crown, User  # noqa: E402
+import config
+from db import Chat, ChatMember, CommandLog, Crown, User
 
 logger = logging.getLogger(__name__)
 
-# Configuration from environment
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+# Configuration from centralized config (which loads .env)
+ADMIN_USERNAME = config.ADMIN_USERNAME
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
-ADMIN_PORT = int(os.getenv("ADMIN_PORT", "5000"))
-ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", secrets.token_hex(16))
+ADMIN_PORT = config.ADMIN_PORT
+ADMIN_SECRET_KEY = config.ADMIN_SECRET_KEY
 
 # Store for authenticated sessions
 app.storage.secret = ADMIN_SECRET_KEY
@@ -881,6 +879,10 @@ def members_page():
 
 def run_admin():
     """Run the admin server."""
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
     warn_if_weak_password(ADMIN_PASSWORD)
     logger.info("Starting admin dashboard on http://0.0.0.0:%s", ADMIN_PORT)
     logger.info("Login with username: %s", ADMIN_USERNAME)

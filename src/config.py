@@ -40,7 +40,7 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 OLLAMA_HOST = _env_str("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL = _env_str("OLLAMA_MODEL", "qwen2.5:0.5b")
 OLLAMA_TIMEOUT = float(_env_str("OLLAMA_TIMEOUT", "30.0"))
-OLLAMA_MAX_CONCURRENT = int(_env_str("OLLAMA_MAX_CONCURRENT", "2"))
+OLLAMA_MAX_CONCURRENT = int(_env_str("OLLAMA_MAX_CONCURRENT", "1"))
 
 ## Admin Dashboard
 ADMIN_USERNAME = _env_str("ADMIN_USERNAME", "admin")
@@ -49,8 +49,16 @@ ADMIN_PORT = int(_env_str("ADMIN_PORT", "5000"))
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY") or secrets.token_hex(16)
 
 ## Collage Cache
+_collage_cache_dir = _env_str("COLLAGE_CACHE_DIR", "data/collage_cache")
+if not os.path.isabs(_collage_cache_dir):
+    COLLAGE_CACHE_DIR = PROJECT_ROOT / _collage_cache_dir
+else:
+    COLLAGE_CACHE_DIR = Path(_collage_cache_dir)
 COLLAGE_CACHE_MAX_MB = int(_env_str("COLLAGE_CACHE_MAX_MB", "100"))
 COLLAGE_CACHE_TTL_DAYS = int(_env_str("COLLAGE_CACHE_TTL_DAYS", "7"))
+COLLAGE_CACHE_CLEANUP_INTERVAL_SECONDS = float(
+    _env_str("COLLAGE_CACHE_CLEANUP_INTERVAL_SECONDS", "3600")
+)
 
 
 def validate_bot_config() -> None:

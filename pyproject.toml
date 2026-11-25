@@ -61,7 +61,7 @@ target-version = "py314"
 [tool.ruff.lint]
 # Enable Pyflakes (`F`), pycodestyle (`E`), bugbear (`B`), pyupgrade (`UP`), and async (`ASYNC`).
 select = ["E4", "E7", "E9", "F", "B", "UP", "ASYNC"]
-ignore = ["UP035", "UP045", "ASYNC230"]
+ignore = ["UP035", "UP045"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]

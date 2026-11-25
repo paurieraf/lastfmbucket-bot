@@ -1,7 +1,6 @@
 import logging
 
 import sentry_sdk
-from dotenv import load_dotenv
 from telegram import LinkPreviewOptions, Update, constants
 from telegram.ext import (
     Application,
@@ -24,8 +23,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 
 async def post_init(application: Application) -> None:

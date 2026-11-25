@@ -13,9 +13,6 @@ from playhouse.sqlite_ext import SqliteExtDatabase
 
 import config
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
 logger = logging.getLogger(__name__)
 
 """
@@ -195,9 +192,9 @@ def create_or_update_user(
             user.telegram_username = clean_tg_username
             user.lastfm_username = clean_lfm_username
             user.save()
-            logging.info(f"User updated: {user}")
+            logger.info(f"User updated: {user}")
         else:
-            logging.info(f"User created: {user}")
+            logger.info(f"User created: {user}")
     return user
 
 
@@ -251,14 +248,14 @@ def delete_user(telegram_user_id: int) -> None:
         user = User.get_or_none(telegram_id=telegram_user_id)
         if user:
             user.delete_instance(recursive=True)
-            logging.info(f"User with telegram_id {telegram_user_id} deleted.")
+            logger.info(f"User with telegram_id {telegram_user_id} deleted.")
         deleted_logs = (
             CommandLog.delete()
             .where(CommandLog.user_id == telegram_user_id)
             .execute()
         )
         if deleted_logs:
-            logging.info(
+            logger.info(
                 f"Deleted {deleted_logs} command log(s) for telegram_id {telegram_user_id}."
             )
 
@@ -418,39 +415,63 @@ def upsert_crown(
 def get_chat_crowns_leaderboard(chat_id: int, limit: int = 10) -> list[dict]:
     """
     Retrieves the crowns leaderboard for a chat (users with the most crowns).
-    Returns list of dicts with user, crown_count, and sample_artists.
+    Returns list of dicts with user, crown_count, and samples.
     """
     chat = Chat.get_or_none(telegram_id=chat_id)
     if not chat:
         return []
 
-    # Count crowns per user
-    crown_counts = (
-        Crown.select(Crown.user, fn.COUNT(Crown.id).alias("count"))
+    # Query 2: Eagerly join User and count crowns per user
+    crown_counts = list(
+        Crown.select(Crown.user, User, fn.COUNT(Crown.id).alias("count"))
+        .join(User)
         .where(Crown.chat == chat)
         .group_by(Crown.user)
         .order_by(SQL("count DESC"))
         .limit(limit)
     )
+    if not crown_counts:
+        return []
 
-    leaderboard = []
-    for entry in crown_counts:
-        # Get top 3 sample crowned artists for this user
-        sample_crowns = (
-            Crown.select(Crown.artist_name, Crown.artist_url, Crown.playcount)
-            .where((Crown.chat == chat) & (Crown.user == entry.user))
-            .order_by(Crown.playcount.desc())
-            .limit(3)
-        )
-        samples = [
-            {"name": c.artist_name, "url": c.artist_url, "plays": c.playcount}
-            for c in sample_crowns
-        ]
-        leaderboard.append(
-            {"user": entry.user, "crown_count": entry.count, "samples": samples}
+    # Query 3: Single batched window-function query for top-3 sample crowns per user
+    user_ids = [entry.user_id for entry in crown_counts]
+    placeholders = ", ".join("?" for _ in user_ids)
+    cursor = db.execute_sql(
+        f"""
+        SELECT user_id, artist_name, artist_url, playcount
+        FROM (
+            SELECT
+                user_id,
+                artist_name,
+                artist_url,
+                playcount,
+                ROW_NUMBER() OVER (
+                    PARTITION BY user_id
+                    ORDER BY playcount DESC, id ASC
+                ) AS rn
+            FROM crown
+            WHERE chat_id = ? AND user_id IN ({placeholders})
+        ) ranked
+        WHERE rn <= 3
+        ORDER BY user_id, rn ASC
+        """,
+        [chat.id, *user_ids],
+    )
+
+    samples_by_user: dict[int, list[dict]] = {}
+    for user_id, artist_name, artist_url, playcount in cursor.fetchall():
+        samples_by_user.setdefault(user_id, []).append(
+            {"name": artist_name, "url": artist_url, "plays": playcount}
         )
 
-    return leaderboard
+    return [
+        {
+            "user": entry.user,
+            "crown_count": entry.count,
+            "samples": samples_by_user.get(entry.user_id, []),
+        }
+        for entry in crown_counts
+    ]
 
 
 def get_user_crowns(chat_id: int, user_id: int) -> list[Crown]:
@@ -530,7 +551,7 @@ def create_or_update_chat(telegram_chat_id: int, telegram_chat_name: str) -> Cha
         if not created:
             chat.telegram_chat_name = telegram_chat_name
             chat.save()
-            logging.info(f"Chat updated: {chat}")
+            logger.info(f"Chat updated: {chat}")
         else:
-            logging.info(f"Chat created: {chat}")
+            logger.info(f"Chat created: {chat}")
     return chat

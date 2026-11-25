@@ -38,7 +38,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.OLLAMA_MODEL, "qwen2.5:0.5b")
         self.assertEqual(cfg.OLLAMA_TIMEOUT, 30.0)
         self.assertIsInstance(cfg.OLLAMA_TIMEOUT, float)
-        self.assertEqual(cfg.OLLAMA_MAX_CONCURRENT, 2)
+        self.assertEqual(cfg.OLLAMA_MAX_CONCURRENT, 1)
         self.assertIsInstance(cfg.OLLAMA_MAX_CONCURRENT, int)
 
         self.assertEqual(cfg.ADMIN_USERNAME, "admin")
@@ -48,10 +48,16 @@ class TestConfig(unittest.TestCase):
         self.assertIsInstance(cfg.ADMIN_SECRET_KEY, str)
         self.assertEqual(len(cfg.ADMIN_SECRET_KEY), 32)
 
+        self.assertEqual(
+            cfg.COLLAGE_CACHE_DIR, cfg.PROJECT_ROOT / "data" / "collage_cache"
+        )
+        self.assertIsInstance(cfg.COLLAGE_CACHE_DIR, Path)
         self.assertEqual(cfg.COLLAGE_CACHE_MAX_MB, 100)
         self.assertIsInstance(cfg.COLLAGE_CACHE_MAX_MB, int)
         self.assertEqual(cfg.COLLAGE_CACHE_TTL_DAYS, 7)
         self.assertIsInstance(cfg.COLLAGE_CACHE_TTL_DAYS, int)
+        self.assertEqual(cfg.COLLAGE_CACHE_CLEANUP_INTERVAL_SECONDS, 3600.0)
+        self.assertIsInstance(cfg.COLLAGE_CACHE_CLEANUP_INTERVAL_SECONDS, float)
 
     def test_env_overrides(self):
         cfg = self._reload_config(

@@ -541,24 +541,15 @@ class TestHtmlEscapingAndUxServices(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Artist &lt;X&gt; &amp; Y", tops_msg)
 
         # Compare with special characters
-        mock_lfm_svc.get_user_stats = AsyncMock(
+        compare_user = MagicMock(lastfm_username="u1<x>", telegram_username="tg<user>")
+        mock_lfm_svc.get_user_playcount = AsyncMock(side_effect=[100, 200])
+        mock_lfm_svc.get_user_top_artists = AsyncMock(
             side_effect=[
-                {
-                    "username": "u1<x>",
-                    "playcount": 100,
-                    "top_artists": [{"name": "Band <A>", "plays": 50}],
-                },
-                {
-                    "username": "u2&y",
-                    "playcount": 200,
-                    "top_artists": [{"name": "Band & B", "plays": 60}],
-                },
+                [{"name": "Common <Band>", "plays": 10}, {"name": "Band <A>", "plays": 50}],
+                [{"name": "Common <Band>", "plays": 20}, {"name": "Band & B", "plays": 60}],
             ]
         )
-        mock_lfm_svc.get_common_artists = AsyncMock(
-            return_value=[{"name": "Common <Band>", "plays1": 10, "plays2": 20}]
-        )
-        with patch("services.db.get_linked_user", return_value=user):
+        with patch("services.db.get_linked_user", return_value=compare_user):
             cmp_msg = await view_service.build_compare_response(1, "u2&y")
         self.assertIn("u1&lt;x&gt;", cmp_msg)
         self.assertIn("u2&amp;y", cmp_msg)
@@ -723,7 +714,11 @@ class TestHtmlEscapingAndUxServices(unittest.IsolatedAsyncioTestCase):
 class TestPassiveGroupDiscoveryAndSentry(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.orig_db = db.db
-        self.test_db = SqliteExtDatabase(":memory:")
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.test_db = SqliteExtDatabase(
+            str(Path(self.tmpdir.name) / "test.db"),
+            pragmas={"journal_mode": "wal", "busy_timeout": 5000},
+        )
         db.db = self.test_db
         db.db.bind(db.MODELS, bind_refs=False, bind_backrefs=False)
         self.test_db.connect()
@@ -732,6 +727,7 @@ class TestPassiveGroupDiscoveryAndSentry(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.test_db.drop_tables(db.MODELS)
         self.test_db.close()
+        self.tmpdir.cleanup()
         db.db = self.orig_db
         self.orig_db.bind(db.MODELS, bind_refs=False, bind_backrefs=False)
 
