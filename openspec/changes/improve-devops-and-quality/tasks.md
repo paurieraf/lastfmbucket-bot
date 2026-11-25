@@ -1,0 +1,26 @@
+# Tasks
+
+## 1. Packaging & Linting (`pyproject.toml`, `uv.lock`)
+
+- [ ] 1.1 Update `pyproject.toml`: move `exclude`, `line-length`, `indent-width`, and `target-version` from `[project]` into `[tool.ruff]`; replace `[project].description` placeholder with a concise project description; move `ruff==0.14.10` from `[project.dependencies]` to `[dependency-groups] dev`; and configure `[tool.ruff.lint]` with `select = ["E4", "E7", "E9", "F", "B", "UP", "ASYNC"]` and `ignore = ["UP035", "UP045", "ASYNC230"]`. Verify `pyproject.toml` parses cleanly with `python3 -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))"` and `uv run ruff check src/` exits 0.
+- [ ] 1.2 Regenerate `uv.lock` via `uv lock` and sync dependencies with `uv sync --locked`. Verify `uv lock --check` exits 0 and `uv export --no-dev --no-hashes | grep -q '^ruff=='` returns non-zero (confirming `ruff` is excluded from production dependencies).
+
+## 2. Centralized Configuration & Unit Tests (`src/config.py`, `.env.template`, `tests/test_config.py`)
+
+- [ ] 2.1 Update `src/config.py` to preserve all existing constants (`PROJECT_ROOT`, `CHANGELOG_PATH`, `DB_SQLITE_NAME`, `LASTFM_API_KEY`, `LASTFM_API_SECRET`, `LASTFM_MAX_CONCURRENT`, `TELEGRAM_BOT_TOKEN`, `SENTRY_DSN`), guard empty `DB_SQLITE_NAME` values, add centralized settings (`OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`, `OLLAMA_MAX_CONCURRENT`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_PORT`, `ADMIN_SECRET_KEY`, `COLLAGE_CACHE_MAX_MB`, `COLLAGE_CACHE_TTL_DAYS`), and implement `validate_bot_config()` raising `ValueError` listing all missing required credentials (`TELEGRAM_BOT_TOKEN`, `LASTFM_API_KEY`, `LASTFM_API_SECRET`). Verify importing `src/config.py` without credentials succeeds and `uv run python -m unittest src/tests.py` still passes.
+- [ ] 2.2 Create `tests/test_config.py` covering default values, environment variable overrides, relative/absolute/empty `DB_SQLITE_NAME` resolution, and `validate_bot_config()` success and failure cases (missing single, multiple, and whitespace-only variables). Verify `uv run python -m unittest discover -s tests` and `uv run ruff check src/ tests/` both pass.
+- [ ] 2.3 Update `.env.template` to set `DB_SQLITE_NAME=data/lastfmbucket-bot.db`, replace the `ADMIN_SECRET_KEY=data/lastfmbucket-bot.db` copy-paste bug with a safe placeholder, and document `ADMIN_PORT`, `LASTFM_MAX_CONCURRENT`, `OLLAMA_HOST`, and `OLLAMA_MODEL` (plus optional Ollama/collage cache settings). Verify `.env.template` contains no database path under `ADMIN_SECRET_KEY` and includes all required documented keys.
+
+## 3. Container & Compose Hardening (`Dockerfile`, `.dockerignore`, `docker-compose.yml`)
+
+- [ ] 3.1 Update `.dockerignore` to exclude `src/tests.py`, `tests/`, `docs/`, `openspec/`, `data/`, `.github`, dev markdown docs (`ARCHITECTURE.md`, `CONTEXT.md`, `PROJECT.md`, `SKILL.md`, `README.md`), `deploy.sh`, `Caddyfile`, and `docker-compose.yml`, while removing `CHANGELOG.md` from `.dockerignore` so `/changelog` works at runtime. Verify `CHANGELOG.md` is not ignored and test/doc paths are listed.
+- [ ] 3.2 Rewrite `Dockerfile` as a multi-stage build on `python:3.14-slim-trixie`: install build deps and run `uv sync --locked --no-install-project --compile-bytecode --no-dev` into `/app/.venv` after copying only `pyproject.toml` and `uv.lock` in the `builder` stage; in the `runtime` stage install only runtime shared libraries (`zlib1g`, `libjpeg62-turbo`, `libpng16-16t64`, `libwebp7`, `libfreetype6`), copy `/app/.venv`, `src/`, and `CHANGELOG.md` owned by non-root `appuser` (UID/GID 1000), create writable `/app/data`, set `USER appuser`, and add `HEALTHCHECK`. Verify `Dockerfile` syntax (and `docker build` if Docker daemon is available).
+- [ ] 3.3 Update `docker-compose.yml` to bind `admin` port to `127.0.0.1:8080:8080`, add `healthcheck` definitions to `ollama` and `admin`, and configure `bot.depends_on` to wait on `ollama` (`condition: service_healthy`). Verify `docker compose config --quiet` (if Docker is available) or YAML parsing via Python confirms valid Compose syntax and `127.0.0.1:8080:8080` binding.
+
+## 4. CI Quality Gate (`.github/workflows/deploy.yml`)
+
+- [ ] 4.1 Update `.github/workflows/deploy.yml` to trigger on `pull_request` to `main` in addition to `push` to `main` and `workflow_dispatch`; add a `test-and-lint` job using `astral-sh/setup-uv@v5` that runs `uv sync --locked`, `uv run ruff check src/ tests/`, `uv run python -m unittest src/tests.py`, and `uv run python -m unittest discover -s tests`; and update `build-and-push` with `needs: test-and-lint` and `if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'`. Verify YAML syntax parses cleanly and job dependency/condition logic matches the spec.
+
+## 5. End-to-End Verification
+
+- [ ] 5.1 Run full local quality gate (`uv lock --check`, `uv run ruff check src/ tests/`, `uv run python -m unittest src/tests.py`, `uv run python -m unittest discover -s tests`) and confirm `git status` shows changes strictly limited to the owned file set (`pyproject.toml`, `uv.lock`, `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `.env.template`, `.github/workflows/deploy.yml`, `src/config.py`, `tests/test_config.py`).
