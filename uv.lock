@@ -468,8 +468,12 @@ dependencies = [
     { name = "pylast" },
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
-    { name = "ruff" },
     { name = "sentry-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -483,9 +487,11 @@ requires-dist = [
     { name = "pylast", specifier = ">=5.3.0" },
     { name = "python-dotenv", specifier = "==1.2.1" },
     { name = "python-telegram-bot", specifier = "==22.8" },
-    { name = "ruff", specifier = "==0.14.10" },
     { name = "sentry-sdk", specifier = "==2.48.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ruff", specifier = "==0.14.10" }]
 
 [[package]]
 name = "lastfmcollagegenerator"
