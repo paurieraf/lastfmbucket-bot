@@ -376,7 +376,7 @@ class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
             font_bold=True,
             filter_name="duotone",
         )
-        self.assertIn("neon, pill, sense text, bold, filtre duotone", caption)
+        self.assertIn("neon, pill, no text, bold, filter duotone", caption)
 
     def test_collage_caption_with_preset(self):
         caption = ViewService.build_collage_caption(
@@ -467,8 +467,13 @@ class TestBotCoreAndLifecycle(unittest.IsolatedAsyncioTestCase):
         mock_app = MagicMock()
         mock_app.bot.set_my_commands = AsyncMock()
 
-        await bot.post_init(mock_app)
+        with patch(
+            "bot.ai.ensure_model_exists", new=AsyncMock(return_value=True)
+        ) as mock_ensure:
+            await bot.post_init(mock_app)
+
         mock_app.bot.set_my_commands.assert_awaited_once_with(commands.BOT_COMMANDS)
+        mock_ensure.assert_awaited_once()
 
     async def test_global_error_handler_sends_notification(self):
         mock_context = MagicMock()
@@ -840,13 +845,18 @@ class TestWhoknowsAndCrownsCommands(unittest.IsolatedAsyncioTestCase):
 
 class TestUnlinkedPlaceholderUsers(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        import tempfile
         import db
 
         self.db = db
         self.orig_db = db.db
         from playhouse.sqlite_ext import SqliteExtDatabase
 
-        self.test_db = SqliteExtDatabase(":memory:")
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.test_db = SqliteExtDatabase(
+            str(Path(self.tmpdir.name) / "test.db"),
+            pragmas={"journal_mode": "wal", "busy_timeout": 5000},
+        )
         self.db.db = self.test_db
         self.db.db.bind(self.db.MODELS, bind_refs=False, bind_backrefs=False)
         self.test_db.connect()
@@ -855,6 +865,7 @@ class TestUnlinkedPlaceholderUsers(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.test_db.drop_tables(self.db.MODELS)
         self.test_db.close()
+        self.tmpdir.cleanup()
         self.db.db = self.orig_db
         self.orig_db.bind(self.db.MODELS, bind_refs=False, bind_backrefs=False)
 

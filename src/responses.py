@@ -1,7 +1,7 @@
 from string import Template
 
 start_response = Template("""
-Hi @$username, welcome to LastfmBucket Bot! $setup_lastfm_user
+Hi $username, welcome to LastfmBucket Bot! $setup_lastfm_user
 
 The code of this bot is public: https://github.com/paurieraf/lastfmbucket-bot 
 
@@ -34,6 +34,10 @@ $telegram_user_first_name is now listening to
 $recent_tracks_list
 """)
 
+recent_tracks_empty = Template("""
+🔎 No recent tracks found for <b>$lastfm_username</b>.
+""")
+
 tops_choose_entity_type = Template("""
 Choose the type of top you want to see:
 """)
@@ -43,7 +47,7 @@ Choose the period for $entity_type:
 """)
 
 tops_list = Template("""
-Top $entity_type for $period for <a href="https://www.last.fm/user/$lastfm_username">$lastfm_username</a>:
+Top $entity_type for $period for <a href="https://www.last.fm/user/$lastfm_username_url">$lastfm_username</a>:
 
 $tops_list
 """)
@@ -70,7 +74,7 @@ $current_style
 """)
 
 collage_caption = Template("""
-🎨 <b>Top $entity_type collage</b> ($size, $period$tile_note$style_note) for <a href="https://www.last.fm/user/$lastfm_username">$lastfm_username</a>
+🎨 <b>Top $entity_type collage</b> ($size, $period$tile_note$style_note) for <a href="https://www.last.fm/user/$lastfm_username_url">$lastfm_username</a>
 """)
 
 collage_error = Template("""
@@ -82,17 +86,18 @@ privacy = Template("""\
 This bot is a hobby project and is not a commercial product.
 
 <b>Data Collected</b>
-- Your Telegram user ID is stored to associate you with your Last.fm username.
-- Your Last.fm username is stored to fetch your music data.
-- The bot does not collect any other personal data.
+- Your Telegram user ID and Telegram username (if set) to associate your account and display group rankings.
+- Your Last.fm username to fetch your music listening data.
+- Group chat memberships (including opt-out preference) and group artist crowns earned in chats.
+- Command usage logs (command name, arguments, chat, and timestamp) for operational debugging and diagnostics.
 
 <b>Data Usage</b>
-- The collected data is used solely for the purpose of providing the bot's features.
-- Your data is not shared with any third parties.
+- The collected data is used solely to provide the bot's features.
+- Your data is not sold or shared with third parties, except querying Last.fm (and the configured AI provider when using AI commands).
 
 <b>Data Removal</b>
-- To remove your data, you can revoke the bot's access from your Telegram settings.
-- Alternatively, you can contact the bot developer to have your data manually removed.
+- Use /preferences and tap <b>Unlink your account</b> to delete your user record, group memberships, crowns, and command logs.
+- You can also hide yourself from group rankings at any time via /preferences.
 
 <b>License</b>
 - This bot is licensed under the GPLv3. The source code is available on <a href="https://github.com/paurieraf/lastfmbucket-bot">GitHub</a>.

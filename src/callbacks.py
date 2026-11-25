@@ -30,6 +30,51 @@ PRESET_ALIASES = {
     "4k": "desktop-wallpaper-4k",
 }
 
+THEME_TO_CODE = {
+    "dark": "d",
+    "light": "l",
+    "glassmorphic": "g",
+    "sunset": "s",
+    "neon": "n",
+    "adaptive": "a",
+}
+CODE_TO_THEME = {v: k for k, v in THEME_TO_CODE.items()}
+
+OVERLAY_TO_CODE = {
+    "banner": "b",
+    "full_tint": "f",
+    "gradient": "g",
+    "pill": "p",
+    "clean": "c",
+}
+CODE_TO_OVERLAY = {v: k for k, v in OVERLAY_TO_CODE.items()}
+
+PRESET_TO_CODE = {
+    "story": "s",
+    "instagram-story": "s",
+    "post": "p",
+    "instagram-post": "p",
+    "header": "h",
+    "twitter-header": "h",
+    "wallpaper": "w",
+    "desktop-wallpaper": "w",
+    "4k": "4",
+    "desktop-wallpaper-4k": "4",
+}
+CODE_TO_PRESET = {
+    "s": "story",
+    "p": "post",
+    "h": "header",
+    "w": "wallpaper",
+    "4": "4k",
+}
+
+STYLE_TO_CODE = {
+    "set": "s",
+    "skip": "k",
+}
+CODE_TO_STYLE = {v: k for k, v in STYLE_TO_CODE.items()}
+
 
 class Action(StrEnum):
     """Short codes for callback actions."""
@@ -87,6 +132,14 @@ class Callback:
 
     def encode(self) -> str:
         """Encode to compact string format for Telegram callback_data."""
+        theme_code = THEME_TO_CODE.get(self.theme, self.theme) if self.theme else ""
+        overlay_code = (
+            OVERLAY_TO_CODE.get(self.overlay, self.overlay) if self.overlay else ""
+        )
+        preset_code = (
+            PRESET_TO_CODE.get(self.preset, self.preset) if self.preset else ""
+        )
+        style_code = STYLE_TO_CODE.get(self.style, self.style) if self.style else ""
         parts = [
             VERSION,
             self.action,
@@ -94,13 +147,14 @@ class Callback:
             self.entity or "",
             self.period or "",
             self.size or "",
-            self.theme or "",
-            self.overlay or "",
-            self.preset or "",
-            self.style or "",
+            theme_code,
+            overlay_code,
+            preset_code,
+            style_code,
         ]
         encoded = SEP.join(parts)
-        assert len(encoded.encode("utf-8")) <= 64, f"Callback too long: {encoded}"
+        if len(encoded.encode("utf-8")) > 64:
+            raise ValueError(f"Callback data exceeds 64 bytes: {encoded}")
         return encoded
 
     @classmethod
@@ -120,10 +174,19 @@ class Callback:
             entity = Entity(parts[3]) if len(parts) > 3 and parts[3] else None
             period = Period(parts[4]) if len(parts) > 4 and parts[4] else None
             size = parts[5] if len(parts) > 5 and parts[5] else None
-            theme = parts[6] if len(parts) > 6 and parts[6] else None
-            overlay = parts[7] if len(parts) > 7 and parts[7] else None
-            preset = parts[8] if len(parts) > 8 and parts[8] else None
-            style = parts[9] if len(parts) > 9 and parts[9] else None
+            raw_theme = parts[6] if len(parts) > 6 and parts[6] else None
+            raw_overlay = parts[7] if len(parts) > 7 and parts[7] else None
+            raw_preset = parts[8] if len(parts) > 8 and parts[8] else None
+            raw_style = parts[9] if len(parts) > 9 and parts[9] else None
+
+            theme = CODE_TO_THEME.get(raw_theme, raw_theme) if raw_theme else None
+            overlay = (
+                CODE_TO_OVERLAY.get(raw_overlay, raw_overlay) if raw_overlay else None
+            )
+            preset = (
+                CODE_TO_PRESET.get(raw_preset, raw_preset) if raw_preset else None
+            )
+            style = CODE_TO_STYLE.get(raw_style, raw_style) if raw_style else None
 
             return cls(
                 action=action,

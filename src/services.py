@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import tempfile
+import time
+import urllib.parse
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Callable, Optional
@@ -44,9 +46,6 @@ from callbacks import (
 )
 from lastfm import EntityType, LastfmClient, Period
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
 logger = logging.getLogger(__name__)
 
 LASTFM_SEMAPHORE = asyncio.Semaphore(config.LASTFM_MAX_CONCURRENT)
@@ -158,6 +157,19 @@ class LastfmService:
             tops = None
         return tops
 
+    async def get_user_playcount(self, username: str) -> int | None:
+        return await _run_lastfm_call(self._lastfm_client.get_user_playcount, username)
+
+    async def get_user_top_artists(
+        self, username: str, period: Period = Period.OVERALL, limit: int = 50
+    ) -> list[dict] | None:
+        return await _run_lastfm_call(
+            self._lastfm_client.get_user_top_artists,
+            username,
+            period=period,
+            limit=limit,
+        )
+
     async def get_user_stats(self, username: str) -> dict | None:
         return await _run_lastfm_call(self._lastfm_client.get_user_stats, username)
 
@@ -186,11 +198,18 @@ class ViewService:
             setup_lastfm_user_text = "Use /set [username] to set your Last.fm username."
         else:
             setup_lastfm_user_text = (
-                f"Last.fm username already set to @{user.lastfm_username}"
+                f"Last.fm username already set to @{html.escape(user.lastfm_username)}"
             )
 
+        if telegram_user.username:
+            display_name = f"@{html.escape(telegram_user.username)}"
+        elif getattr(telegram_user, "first_name", None):
+            display_name = html.escape(telegram_user.first_name)
+        else:
+            display_name = "there"
+
         response = responses.start_response.substitute(
-            username=telegram_user.username, setup_lastfm_user=setup_lastfm_user_text
+            username=display_name, setup_lastfm_user=setup_lastfm_user_text
         )
         return emojize(response)
 
@@ -199,7 +218,7 @@ class ViewService:
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
         user, track = await self.lastfm_service.get_now_playing(telegram_user_id)
         if not user:
-            logging.warning(
+            logger.warning(
                 f"User with telegram_id {telegram_user_id} not found in the database"
             )
             response = responses.user_not_found.substitute()
@@ -207,20 +226,28 @@ class ViewService:
 
         if not track:
             response = responses.now_playing_no_currently_playing.substitute(
-                lastfm_username=user.lastfm_username
+                lastfm_username=html.escape(user.lastfm_username)
             )
             return emojize(response), None, None
 
-        album = track.get_album()
+        album = await _run_lastfm_call(track.get_album)
         track_album = album.title if album else ""
-        cover_image = album.get_cover_image() if (show_cover and album) else None
+        cover_image = (
+            await _run_lastfm_call(album.get_cover_image)
+            if (show_cover and album)
+            else None
+        )
+        track_url = html.escape(track.get_url() or "", quote=True)
+        track_artist = (
+            track.artist.name if hasattr(track.artist, "name") else str(track.artist)
+        )
 
         response = responses.now_playing.substitute(
-            lastfm_username=user.lastfm_username,
-            track_artist=track.artist,
-            track_url=track.get_url(),
-            track_title=track.title,
-            track_album=track_album,
+            lastfm_username=html.escape(user.lastfm_username),
+            track_artist=html.escape(str(track_artist)),
+            track_url=track_url,
+            track_title=html.escape(str(track.title or "")),
+            track_album=html.escape(str(track_album)),
         )
         keyboard = [
             [
@@ -229,7 +256,7 @@ class ViewService:
                     callback_data=Callback(Action.NP_MORE, telegram_user_id).encode(),
                 ),
                 telegram.InlineKeyboardButton(
-                    "👑 Qui ho coneix?",
+                    "👑 Who knows?",
                     callback_data=Callback(Action.WHOKNOWS, telegram_user_id).encode(),
                 ),
             ]
@@ -264,22 +291,28 @@ class ViewService:
 
         if not lastfm_user_exists:
             response = responses.lastfm_username_set_user_not_found.substitute(
-                lastfm_username=lastfm_username
+                lastfm_username=html.escape(lastfm_username)
             )
             return emojize(response)
 
         response = responses.lastfm_username_set.substitute(
-            lastfm_username=user.lastfm_username
+            lastfm_username=html.escape(user.lastfm_username)
         )
         return emojize(response)
 
     async def build_status_response(
         self, telegram_user_id: int, show_cover: bool = False
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
-        recent_tracks = await self.lastfm_service.get_recent_tracks(telegram_user_id)
         user = db.get_linked_user(telegram_user_id)
-        if not recent_tracks or not user:
+        if not user:
             response = responses.user_not_found.substitute()
+            return emojize(response), None, None
+
+        recent_tracks = await self.lastfm_service.get_recent_tracks(telegram_user_id)
+        if not recent_tracks:
+            response = responses.recent_tracks_empty.substitute(
+                lastfm_username=html.escape(user.lastfm_username)
+            )
             return emojize(response), None, None
 
         recent_tracks_template_list = ""
@@ -294,15 +327,26 @@ class ViewService:
                     f" ago"
                 )
 
+            artist_name = (
+                played_track.track.artist.name
+                if hasattr(played_track.track.artist, "name")
+                else str(played_track.track.artist)
+            )
+            track_url = html.escape(played_track.track.get_url() or "", quote=True)
+            track_title = html.escape(str(played_track.track.title or ""))
+            album_name = html.escape(str(played_track.album or ""))
+
             recent_tracks_template_list += (
-                f"{'⏳' if is_currently_playing else ''} 🎧<i>{played_track.track.artist.name}</i>"
-                f" — <strong><a href='{played_track.track.get_url()}'>{played_track.track.title}</a></strong>,"
-                f" [{played_track.album}]"
+                f"{'⏳' if is_currently_playing else ''} 🎧<i>{html.escape(str(artist_name))}</i>"
+                f" — <strong><a href='{track_url}'>{track_title}</a></strong>,"
+                f" [{album_name}]"
                 f"{time_ago}"
                 f"\n"
             )
         response = responses.recent_tracks.substitute(
-            telegram_user_first_name=user.telegram_username or user.lastfm_username,
+            telegram_user_first_name=html.escape(
+                user.telegram_username or user.lastfm_username
+            ),
             recent_tracks_list=recent_tracks_template_list,
         )
         less_info_action = Action.NP_LESS if not show_cover else Action.NP_LESS_COVER
@@ -332,9 +376,13 @@ class ViewService:
         cover_url = None
         if show_cover:
             try:
-                last_played_track_album = last_played_track.get_album()
+                last_played_track_album = await _run_lastfm_call(
+                    last_played_track.get_album
+                )
                 if last_played_track_album:
-                    cover_url = last_played_track_album.get_cover_image()
+                    cover_url = await _run_lastfm_call(
+                        last_played_track_album.get_cover_image
+                    )
             except Exception:
                 pass  # Track not found or no album info
 
@@ -405,7 +453,9 @@ class ViewService:
 
             reply_markup = telegram.InlineKeyboardMarkup(keyboard)
             return emojize(
-                responses.tops_choose_period.substitute(entity_type=entity_type)
+                responses.tops_choose_period.substitute(
+                    entity_type=html.escape(str(entity_type))
+                )
             ), reply_markup
 
         user = db.get_linked_user(telegram_user_id)
@@ -416,16 +466,22 @@ class ViewService:
         if not tops:
             return emojize(
                 responses.tops_no_available_response.substitute(
-                    lastfm_username=user.lastfm_username
+                    lastfm_username=html.escape(user.lastfm_username)
                 )
             ), None
 
         tops_list = ""
         for i, top in enumerate(tops, 1):
+            item_url = html.escape(top.item.get_url() or "", quote=True)
             if entity_type == EntityType.ARTIST:
-                tops_list += f"{i}. <a href='{top.item.get_url()}'>{top.item.name}</a> - {top.weight} plays\n"
+                item_name = html.escape(str(top.item.name))
+                tops_list += (
+                    f"{i}. <a href='{item_url}'>{item_name}</a> - {top.weight} plays\n"
+                )
             else:
-                tops_list += f"{i}. <a href='{top.item.get_url()}'>{top.item.title} — {top.item.artist}</a> - {top.weight} plays\n"
+                item_title = html.escape(str(top.item.title))
+                item_artist = html.escape(str(top.item.artist))
+                tops_list += f"{i}. <a href='{item_url}'>{item_title} — {item_artist}</a> - {top.weight} plays\n"
 
         # Map period back to user-friendly name for display
         period_display_map = {
@@ -439,10 +495,11 @@ class ViewService:
         period_name = period_display_map.get(period, period.name)
 
         response = responses.tops_list.substitute(
-            entity_type=entity_type,
-            period=period_name,
+            entity_type=html.escape(str(entity_type)),
+            period=html.escape(str(period_name)),
             tops_list=tops_list,
-            lastfm_username=user.lastfm_username,
+            lastfm_username_url=urllib.parse.quote(user.lastfm_username, safe=""),
+            lastfm_username=html.escape(user.lastfm_username),
         )
         return emojize(response), None
 
@@ -455,13 +512,20 @@ class ViewService:
     async def build_changelog_response() -> str:
         """Builds the changelog response by reading CHANGELOG.md."""
         try:
-            changelog_content = config.CHANGELOG_PATH.read_text(encoding="utf-8")
-            max_length = 4000
-            if len(changelog_content) > max_length:
-                changelog_content = (
-                    changelog_content[:max_length] + "\n\n... (truncated)"
-                )
-            return f"<pre>{changelog_content}</pre>"
+            changelog_content = await asyncio.to_thread(
+                config.CHANGELOG_PATH.read_text, encoding="utf-8"
+            )
+            escaped = html.escape(changelog_content)
+            suffix = "\n\n... (truncated)"
+            if len(escaped) + len("<pre></pre>") > 4096:
+                max_body = 4096 - len("<pre></pre>") - len(suffix)
+                truncated = escaped[:max_body]
+                last_amp = truncated.rfind("&")
+                last_semi = truncated.rfind(";")
+                if last_amp > last_semi:
+                    truncated = truncated[:last_amp]
+                escaped = truncated + suffix
+            return f"<pre>{escaped}</pre>"
         except FileNotFoundError:
             return "Changelog not available."
 
@@ -472,9 +536,9 @@ class ViewService:
         user = db.get_user(telegram_user_id)
         opt_out = user.group_opt_out if user else False
         opt_out_btn_text = (
-            "🔒 Ocultar-me de rànquings de grup"
+            "🔒 Hide me from group rankings"
             if not opt_out
-            else "🔓 Mostrar-me a rànquings de grup"
+            else "🔓 Show me in group rankings"
         )
         keyboard = [
             [
@@ -503,9 +567,9 @@ class ViewService:
         """Toggles user group ranking opt_out setting and returns feedback."""
         is_opted_out = db.toggle_user_group_opt_out(telegram_user_id)
         status_text = (
-            "Ocult dels rànquings de grup 🔒"
+            "Hidden from group rankings 🔒"
             if is_opted_out
-            else "Visible als rànquings de grup 🔓"
+            else "Visible in group rankings 🔓"
         )
         return emojize(
             responses.preferences_opt_out_updated.substitute(status=status_text)
@@ -524,47 +588,48 @@ class ViewService:
         if not user:
             return emojize(responses.compare_no_lastfm_set.substitute())
 
-        my_stats, other_stats, common_artists = await asyncio.gather(
-            self.lastfm_service.get_user_stats(user.lastfm_username),
-            self.lastfm_service.get_user_stats(other_lastfm_username),
-            self.lastfm_service.get_common_artists(
-                user.lastfm_username, other_lastfm_username
-            ),
+        playcount1, artists1, playcount2, artists2 = await asyncio.gather(
+            self.lastfm_service.get_user_playcount(user.lastfm_username),
+            self.lastfm_service.get_user_top_artists(user.lastfm_username, limit=50),
+            self.lastfm_service.get_user_playcount(other_lastfm_username),
+            self.lastfm_service.get_user_top_artists(other_lastfm_username, limit=50),
         )
 
-        if not my_stats:
+        if playcount1 is None or artists1 is None:
             return emojize(
                 responses.compare_user_not_found.substitute(
-                    username=user.lastfm_username
+                    username=html.escape(user.lastfm_username)
                 )
             )
-        if not other_stats:
+        if playcount2 is None or artists2 is None:
             return emojize(
                 responses.compare_user_not_found.substitute(
-                    username=other_lastfm_username
+                    username=html.escape(other_lastfm_username)
                 )
             )
+
+        common_artists = lastfm.compute_common_artists(artists1, artists2, limit=10)
 
         if common_artists:
             common_artists_text = "\n".join(
-                f"• {a['name']} ({a['plays1']:,} / {a['plays2']:,})"
+                f"• {html.escape(a['name'])} ({a['plays1']:,} / {a['plays2']:,})"
                 for a in common_artists
             )
         else:
             common_artists_text = "None found"
 
         top_artists1_text = ", ".join(
-            f"{a['name']} ({a['plays']:,})" for a in my_stats["top_artists"][:3]
+            f"{html.escape(a['name'])} ({a['plays']:,})" for a in artists1[:3]
         )
         top_artists2_text = ", ".join(
-            f"{a['name']} ({a['plays']:,})" for a in other_stats["top_artists"][:3]
+            f"{html.escape(a['name'])} ({a['plays']:,})" for a in artists2[:3]
         )
 
         response = responses.compare_stats.substitute(
-            user1=my_stats["username"],
-            user2=other_stats["username"],
-            playcount1=f"{my_stats['playcount']:,}",
-            playcount2=f"{other_stats['playcount']:,}",
+            user1=html.escape(user.lastfm_username),
+            user2=html.escape(other_lastfm_username),
+            playcount1=f"{playcount1:,}",
+            playcount2=f"{playcount2:,}",
             common_count=len(common_artists),
             common_artists=common_artists_text,
             top_artists1=top_artists1_text,
@@ -605,24 +670,25 @@ class ViewService:
 
         style_parts: list[str] = []
         if theme and theme != "dark":
-            style_parts.append(theme)
+            style_parts.append(html.escape(theme))
         if overlay_style and overlay_style != "banner":
-            style_parts.append(overlay_style.replace("_", " "))
+            style_parts.append(html.escape(overlay_style.replace("_", " ")))
         if not show_text:
-            style_parts.append("sense text")
+            style_parts.append("no text")
         if font_bold:
             style_parts.append("bold")
         if filter_name:
-            style_parts.append(f"filtre {filter_name}")
+            style_parts.append(f"filter {html.escape(filter_name)}")
         style_note = f", {', '.join(style_parts)}" if style_parts else ""
 
         return responses.collage_caption.substitute(
-            entity_type=entity_type.capitalize(),
-            size=size_display,
-            period=period_label,
+            entity_type=html.escape(entity_type.capitalize()),
+            size=html.escape(size_display),
+            period=html.escape(period_label),
             tile_note=tile_note,
             style_note=style_note,
-            lastfm_username=lastfm_username,
+            lastfm_username_url=urllib.parse.quote(lastfm_username, safe=""),
+            lastfm_username=html.escape(lastfm_username),
         )
 
     async def build_collage_selection_response(
@@ -804,7 +870,7 @@ class ViewService:
                 ],
                 [
                     InlineKeyboardButton(
-                        "✨ Skip",
+                        "✅ Generate" if (theme or overlay) else "✨ Skip & Generate",
                         callback_data=Callback(
                             Action.COLLAGE,
                             telegram_user_id,
@@ -1160,20 +1226,134 @@ class CollageService:
     A service class to handle collage generation using lastfmcollagegenerator.
     """
 
-    DEFAULT_CACHE_DIR = config.PROJECT_ROOT / "data" / "collage_cache"
+    DEFAULT_CACHE_DIR = config.COLLAGE_CACHE_DIR
 
     def __init__(
         self,
         api_key: str | None = None,
         api_secret: str | None = None,
         cache_dir: str | None = None,
+        cache_max_age_days: float | None = None,
+        cache_max_mb: float | None = None,
+        cleanup_interval_seconds: float | None = None,
     ):
         key = api_key or config.LASTFM_API_KEY or ""
         secret = api_secret or config.LASTFM_API_SECRET or ""
-        cache_dir = cache_dir or str(self.DEFAULT_CACHE_DIR)
+        cache_dir = str(cache_dir or self.DEFAULT_CACHE_DIR)
         os.makedirs(cache_dir, exist_ok=True)
         self._cache_dir = cache_dir
+        self._cache_max_age_seconds = (
+            config.COLLAGE_CACHE_TTL_DAYS
+            if cache_max_age_days is None
+            else cache_max_age_days
+        ) * 86400.0
+        self._cache_max_bytes = int(
+            (config.COLLAGE_CACHE_MAX_MB if cache_max_mb is None else cache_max_mb)
+            * 1024
+            * 1024
+        )
+        self._cleanup_interval = (
+            config.COLLAGE_CACHE_CLEANUP_INTERVAL_SECONDS
+            if cleanup_interval_seconds is None
+            else cleanup_interval_seconds
+        )
+        self._last_cleanup: float | None = None
         self._generator = CollageGenerator(lastfm_api_key=key, lastfm_api_secret=secret)
+
+    @staticmethod
+    def _export_collage_to_bytes(image, export_format: str) -> BytesIO:
+        """Export a PIL image via temp file and return a positioned BytesIO stream."""
+        target_fmt = export_format
+        ext = target_fmt.lower()
+        if ext == "jpg":
+            ext = "jpeg"
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            try:
+                export_image(image, tmp_path, format=target_fmt)
+            except (KeyError, Exception) as exp_err:
+                logger.warning(
+                    f"Export with format '{target_fmt}' failed ({exp_err}); falling back to PNG."
+                )
+                target_fmt = "PNG"
+                ext = "png"
+                export_image(image, tmp_path, format="PNG")
+            with open(tmp_path, "rb") as f:
+                bio = BytesIO(f.read())
+            bio.name = f"collage.{ext}"
+            bio.seek(0)
+            return bio
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _cleanup_cache_sync(
+        cache_dir: str, max_age_seconds: float, max_bytes: int
+    ) -> int:
+        """Evict expired and oversized collage cache files from disk."""
+        now = time.time()
+        deleted = 0
+        remaining: list[tuple[float, int, str]] = []
+
+        for root, _dirs, files in os.walk(cache_dir):
+            for filename in files:
+                path = os.path.join(root, filename)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+
+                if max_age_seconds >= 0 and (now - st.st_mtime) > max_age_seconds:
+                    try:
+                        os.remove(path)
+                        deleted += 1
+                    except OSError:
+                        pass
+                else:
+                    remaining.append((st.st_mtime, st.st_size, path))
+
+        total_size = sum(size for _, size, _ in remaining)
+        if max_bytes >= 0 and total_size > max_bytes:
+            remaining.sort(key=lambda item: item[0])
+            for _mtime, size, path in remaining:
+                if total_size <= max_bytes:
+                    break
+                try:
+                    os.remove(path)
+                    total_size -= size
+                    deleted += 1
+                except OSError:
+                    pass
+
+        if deleted > 0:
+            logger.info(f"Evicted {deleted} collage cache file(s) from {cache_dir}")
+        return deleted
+
+    async def maybe_cleanup_cache(self) -> int:
+        """Run throttled off-thread cache cleanup when the cleanup interval has elapsed."""
+        now = time.monotonic()
+        if (
+            self._last_cleanup is not None
+            and (now - self._last_cleanup) < self._cleanup_interval
+        ):
+            return 0
+
+        self._last_cleanup = now
+        try:
+            return await asyncio.to_thread(
+                self._cleanup_cache_sync,
+                self._cache_dir,
+                self._cache_max_age_seconds,
+                self._cache_max_bytes,
+            )
+        except Exception as e:
+            logger.warning(f"Collage cache cleanup failed: {e}")
+            return 0
 
     async def generate_collage_image(
         self, username: str, options: CollageOptions, export_format: str = "WEBP"
@@ -1191,33 +1371,11 @@ class CollageService:
             cache_dir=self._cache_dir,
             **options.build_kwargs(),
         )
-        target_fmt = export_format
-        ext = target_fmt.lower()
-        if ext == "jpg":
-            ext = "jpeg"
-        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
-            tmp_path = tmp.name
-        try:
-            try:
-                export_image(image, tmp_path, format=target_fmt)
-            except (KeyError, Exception) as exp_err:
-                logging.warning(
-                    f"Export with format '{target_fmt}' failed ({exp_err}); falling back to PNG."
-                )
-                target_fmt = "PNG"
-                ext = "png"
-                export_image(image, tmp_path, format="PNG")
-            with open(tmp_path, "rb") as f:
-                bio = BytesIO(f.read())
-            bio.name = f"collage.{ext}"
-            bio.seek(0)
-            return bio
-        finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+        bio = await asyncio.to_thread(
+            self._export_collage_to_bytes, image, export_format
+        )
+        await self.maybe_cleanup_cache()
+        return bio
 
 
 class GroupService:
@@ -1274,7 +1432,7 @@ class GroupService:
         if not active_listeners:
             return responses.whoknows_no_listeners.substitute(
                 artist_name=html.escape(canonical_name),
-                artist_url=artist_url,
+                artist_url=html.escape(artist_url or "", quote=True),
                 chat_name=html.escape(chat_name or "this chat"),
             ), True
 
@@ -1291,11 +1449,19 @@ class GroupService:
 
         dethroned_banner = ""
         if prev_crown and prev_crown.user.telegram_id != top_user.telegram_id:
-            prev_name = prev_crown.user.telegram_username or f"User {prev_crown.user.telegram_id}"
-            new_name = top_user.telegram_username or f"User {top_user.telegram_id}"
+            prev_name = (
+                f"@{html.escape(prev_crown.user.telegram_username)}"
+                if prev_crown.user.telegram_username
+                else f"User {prev_crown.user.telegram_id}"
+            )
+            new_name = (
+                f"@{html.escape(top_user.telegram_username)}"
+                if top_user.telegram_username
+                else f"User {top_user.telegram_id}"
+            )
             dethroned_banner = (
-                f"\n\n⚔️ <b>NOU REI DE LA BANDA!</b> 👑\n"
-                f"<b>@{new_name}</b> ({top_plays:,} plays) ha destronat a <b>@{prev_name}</b> ({prev_crown.playcount:,} plays)!"
+                f"\n\n⚔️ <b>NEW BAND KING!</b> 👑\n"
+                f"<b>{new_name}</b> ({top_plays:,} plays) dethroned <b>{prev_name}</b> ({prev_crown.playcount:,} plays)!"
             )
 
         # 6. Format ranking list
@@ -1305,7 +1471,11 @@ class GroupService:
         for i, (u, plays) in enumerate(active_listeners[:15], start=1):
             badge = rank_badges[i - 1] if i <= len(rank_badges) else f"{i}."
             crown_icon = " 👑" if i == 1 else ""
-            uname = f"@{u.telegram_username}" if u.telegram_username else f"User {u.telegram_id}"
+            uname = (
+                f"@{html.escape(u.telegram_username)}"
+                if u.telegram_username
+                else f"User {u.telegram_id}"
+            )
             pct = (plays / total_plays * 100) if total_plays > 0 else 0
             ranking_lines.append(
                 f"{badge} <b>{uname}</b> — <b>{plays:,}</b> plays{crown_icon} ({pct:.0f}%)"
@@ -1315,7 +1485,7 @@ class GroupService:
 
         response_html = responses.whoknows_ranking.substitute(
             artist_name=html.escape(canonical_name),
-            artist_url=artist_url,
+            artist_url=html.escape(artist_url or "", quote=True),
             chat_name=html.escape(chat_name or "this chat"),
             dethroned_banner=dethroned_banner,
             ranking_list=ranking_list,
@@ -1342,11 +1512,16 @@ class GroupService:
             badge = rank_badges[i - 1] if i <= len(rank_badges) else f"{i}."
             user = entry["user"]
             count = entry["crown_count"]
-            uname = f"@{user.telegram_username}" if user.telegram_username else f"User {user.telegram_id}"
+            uname = (
+                f"@{html.escape(user.telegram_username)}"
+                if user.telegram_username
+                else f"User {user.telegram_id}"
+            )
             samples = entry["samples"]
             sample_str = ", ".join(
-                f"<a href='{s['url']}'>{html.escape(s['name'])}</a> ({s['plays']:,})"
-                if s["url"] else f"{html.escape(s['name'])} ({s['plays']:,})"
+                f"<a href='{html.escape(s['url'], quote=True)}'>{html.escape(s['name'])}</a> ({s['plays']:,})"
+                if s["url"]
+                else f"{html.escape(s['name'])} ({s['plays']:,})"
                 for s in samples
             )
             samples_formatted = f" — <i>{sample_str}</i>" if sample_str else ""
@@ -1365,32 +1540,59 @@ class GroupService:
         """
         Retrieves all crowns held by a specific user in a chat.
         """
-        crowns = await asyncio.to_thread(db.get_user_crowns, chat_id, target_user.telegram_id)
-        display_name = f"@{target_user.telegram_username}" if target_user.telegram_username else f"User {target_user.telegram_id}"
+        crowns = await asyncio.to_thread(
+            db.get_user_crowns, chat_id, target_user.telegram_id
+        )
+        display_name = (
+            f"@{html.escape(target_user.telegram_username)}"
+            if target_user.telegram_username
+            else f"User {target_user.telegram_id}"
+        )
+        escaped_chat_name = html.escape(chat_name or "this chat")
 
         if not crowns:
             return emojize(
                 responses.user_no_crowns.substitute(
                     display_name=display_name,
-                    chat_name=html.escape(chat_name or "this chat"),
+                    chat_name=escaped_chat_name,
                 )
             )
 
-        lines = []
-        for c in crowns:
+        header = responses.user_crowns_list.substitute(
+            display_name=display_name,
+            chat_name=escaped_chat_name,
+            crown_count=len(crowns),
+            crowns_list="",
+        )
+        lines: list[str] = []
+        current_len = len(header)
+        max_len = 3950
+        omitted = 0
+
+        for idx, c in enumerate(crowns):
             artist_link = (
-                f"<a href='{c.artist_url}'>{html.escape(c.artist_name)}</a>"
+                f"<a href='{html.escape(c.artist_url, quote=True)}'>{html.escape(c.artist_name)}</a>"
                 if c.artist_url
                 else html.escape(c.artist_name)
             )
-            lines.append(f"👑 {artist_link} — <b>{c.playcount:,}</b> scrobbles")
+            line = f"👑 {artist_link} — <b>{c.playcount:,}</b> scrobbles"
+            added_len = len(line) + (1 if lines else 0)
+            if current_len + added_len > max_len:
+                omitted = len(crowns) - idx
+                break
+            lines.append(line)
+            current_len += added_len
+
+        crowns_body = "\n".join(lines)
+        if omitted > 0:
+            crowns_body += f"\n\n<i>... and {omitted} more crowns</i>"
 
         return emojize(
             responses.user_crowns_list.substitute(
                 display_name=display_name,
-                chat_name=html.escape(chat_name or "this chat"),
+                chat_name=escaped_chat_name,
                 crown_count=len(crowns),
-                crowns_list="\n".join(lines),
+                crowns_list=crowns_body,
             )
         )
 

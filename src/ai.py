@@ -4,22 +4,21 @@ AI module using Ollama for music-related text generation.
 Uses qwen2.5:0.5b - a tiny but capable model optimized for 2GB RAM.
 """
 
+import asyncio
 import logging
-import os
 import time
 
 import ollama
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+import config
+
 logger = logging.getLogger(__name__)
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
+# Initialize Ollama async client with centralized host and timeout
+client = ollama.AsyncClient(host=config.OLLAMA_HOST, timeout=config.OLLAMA_TIMEOUT)
 
-# Initialize Ollama async client
-client = ollama.AsyncClient(host=OLLAMA_HOST)
+# Match OLLAMA_NUM_PARALLEL=1 in the 2 GB container to prevent OOM / connection pile-ups
+OLLAMA_SEMAPHORE = asyncio.Semaphore(config.OLLAMA_MAX_CONCURRENT)
 
 _MODEL_READY = False
 _LAST_MODEL_CHECK = 0.0
@@ -29,13 +28,14 @@ _MODEL_CHECK_COOLDOWN = 60.0
 async def ensure_model_exists() -> bool:
     """Pull the model if it doesn't exist. Returns True if ready."""
     global _MODEL_READY, _LAST_MODEL_CHECK
+    model_name = config.OLLAMA_MODEL
     try:
-        models = await client.list()
+        models = await asyncio.wait_for(client.list(), timeout=config.OLLAMA_TIMEOUT)
         model_names = [m.model for m in models.models] if models.models else []
-        if MODEL_NAME not in model_names and f"{MODEL_NAME}:latest" not in model_names:
-            logger.info(f"Pulling model {MODEL_NAME}...")
-            await client.pull(MODEL_NAME)
-            logger.info(f"Model {MODEL_NAME} pulled successfully")
+        if model_name not in model_names and f"{model_name}:latest" not in model_names:
+            logger.info(f"Pulling model {model_name}...")
+            await client.pull(model_name)
+            logger.info(f"Model {model_name} pulled successfully")
         _MODEL_READY = True
         return True
     except Exception as e:
@@ -53,6 +53,25 @@ async def _model_available() -> bool:
     if time.time() - _LAST_MODEL_CHECK >= _MODEL_CHECK_COOLDOWN:
         return await ensure_model_exists()
     return False
+
+
+async def _generate_text(prompt: str, options: dict) -> str:
+    """Run a bounded, timeout-guarded Ollama generation and reset readiness on error."""
+    global _MODEL_READY
+    async with OLLAMA_SEMAPHORE:
+        try:
+            response = await asyncio.wait_for(
+                client.generate(
+                    model=config.OLLAMA_MODEL,
+                    prompt=prompt,
+                    options=options,
+                ),
+                timeout=config.OLLAMA_TIMEOUT,
+            )
+            return response.response.strip()
+        except Exception:
+            _MODEL_READY = False
+            raise
 
 
 async def generate_vibe(
@@ -73,12 +92,10 @@ async def generate_vibe(
 Describe the vibe:"""
 
     try:
-        response = await client.generate(
-            model=MODEL_NAME,
+        return await _generate_text(
             prompt=prompt,
             options={"temperature": 0.8, "num_predict": 80, "num_ctx": 1024},
         )
-        return response.response.strip()
     except Exception as e:
         logger.error(f"Vibe generation failed: {e}")
         return "Couldn't analyze your vibe right now. Try again later!"
@@ -100,12 +117,10 @@ Top tracks: {tracks_text}
 Your roast:"""
 
     try:
-        response = await client.generate(
-            model=MODEL_NAME,
+        return await _generate_text(
             prompt=prompt,
             options={"temperature": 0.9, "num_predict": 80, "num_ctx": 1024},
         )
-        return response.response.strip()
     except Exception as e:
         logger.error(f"Roast generation failed: {e}")
         return "My roasting circuits are fried. Try again later! 🔥"
@@ -125,12 +140,10 @@ Favorite artists: {artists_text}
 Recommendations:"""
 
     try:
-        response = await client.generate(
-            model=MODEL_NAME,
+        return await _generate_text(
             prompt=prompt,
             options={"temperature": 0.7, "num_predict": 120, "num_ctx": 1024},
         )
-        return response.response.strip()
     except Exception as e:
         logger.error(f"Recommendation generation failed: {e}")
         return "Couldn't generate recommendations right now. Try again later!"
