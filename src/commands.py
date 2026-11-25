@@ -231,8 +231,14 @@ async def _handle_collage(
             logger.exception(f"Error generating collage: {e}")
             if query.message:
                 await query.message.reply_text(
-                    emojize(responses.collage_error.substitute(error=str(e)))
+                    emojize(responses.collage_error.substitute(error=html.escape(str(e))))
                 )
+        finally:
+            if query.message:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
         return
 
     # Otherwise show next step in interactive selection
@@ -267,6 +273,8 @@ async def _handle_whoknows_button(
 ) -> None:
     query = update.callback_query
     if not query or not update.effective_chat:
+        if query:
+            await query.answer()
         return
     lastfm_service: LastfmService = context.bot_data["lastfm_service"]
     group_service: GroupService = context.bot_data["group_service"]
@@ -276,6 +284,8 @@ async def _handle_whoknows_button(
         await query.answer("Could not determine current artist from Now Playing.", show_alert=True)
         return
 
+    await query.answer()
+
     artist_name = track.artist.name if hasattr(track.artist, "name") else str(track.artist)
     chat_id = update.effective_chat.id
     chat_name = update.effective_chat.title or update.effective_chat.username or "this chat"
@@ -283,6 +293,19 @@ async def _handle_whoknows_button(
     response_text, _ = await group_service.get_whoknows(chat_id, chat_name, artist_name)
     if update.effective_message:
         await update.effective_message.reply_text(response_text)
+
+
+USER_SCOPED_ACTIONS = frozenset(
+    {
+        Action.PREF_UNLINK,
+        Action.PREF_OPT_OUT,
+        Action.COLLAGE,
+        Action.TOPS,
+        Action.NP_LESS,
+        Action.NP_LESS_COVER,
+        Action.NP_MORE,
+    }
+)
 
 
 CALLBACK_ROUTES = {
@@ -303,19 +326,84 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not query:
         return
 
-    await query.answer()
-
     cb = Callback.decode(query.data or "")
     if not cb:
         logger.error(f"Invalid callback data: {query.data}")
+        await query.answer("Invalid or expired button.")
+        return
+
+    if cb.action in USER_SCOPED_ACTIONS and (
+        not query.from_user or query.from_user.id != cb.owner_id
+    ):
+        await query.answer("This button belongs to another user.", show_alert=True)
         return
 
     handler = CALLBACK_ROUTES.get(cb.action)
     if not handler:
         logger.error(f"No handler for action: {cb.action} (data: {query.data})")
+        await query.answer("Invalid or expired button.")
         return
 
+    if cb.action != Action.WHOKNOWS:
+        await query.answer()
+
     await handler(update, context, cb)
+
+
+async def track_group_member(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Passively refresh ChatMember activity for linked users in group chats."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat or user.is_bot:
+        return
+
+    linked_user = db.get_linked_user(user.id)
+    if not linked_user:
+        return
+
+    db.track_chat_member(
+        chat_id=chat.id,
+        user_id=user.id,
+        username=user.username or "",
+        chat_name=chat.title or chat.username or "",
+        chat_type=chat.type or "",
+    )
+
+
+async def _update_or_replace_with_media(
+    message: telegram.Message,
+    response: str,
+    reply_markup: telegram.InlineKeyboardMarkup | None,
+    cover_url: str | None,
+) -> None:
+    """Update a message with media/caption or replace a text message with a photo."""
+    has_photo = bool(getattr(message, "photo", None))
+    if cover_url:
+        if has_photo:
+            await message.edit_media(
+                telegram.InputMediaPhoto(media=cover_url, caption=response),
+                reply_markup=reply_markup,
+            )
+        else:
+            await message.reply_photo(
+                photo=cover_url,
+                caption=response,
+                reply_markup=reply_markup,
+            )
+            try:
+                await message.delete()
+            except Exception:
+                pass
+    else:
+        if has_photo:
+            await message.edit_caption(
+                caption=response,
+                reply_markup=reply_markup,
+            )
+        else:
+            await message.edit_text(response, reply_markup=reply_markup)
 
 
 @log_command(START_COMMAND)
@@ -354,14 +442,7 @@ async def now_playing(
     )
 
     if from_button and show_cover:
-        if cover_url:
-            await message.edit_media(
-                telegram.InputMediaPhoto(media=cover_url, caption=response),
-                reply_markup=reply_markup,
-            )
-        else:
-            # No cover available - just edit the text and remove the cover button
-            await message.edit_text(response, reply_markup=reply_markup)
+        await _update_or_replace_with_media(message, response, reply_markup, cover_url)
     else:
         await message.reply_text(response, reply_markup=reply_markup)
 
@@ -381,7 +462,7 @@ async def lastfm_username_set(
     )
     if not context.args:
         await message.reply_text(
-            "Please provide a Last.fm username. Usage: /set <username>"
+            "Please provide a Last.fm username. Usage: <code>/set &lt;username&gt;</code>"
         )
         return
 
@@ -415,10 +496,7 @@ async def status(
     )
 
     if from_button and show_cover:
-        await message.edit_media(
-            telegram.InputMediaPhoto(media=cover_url, caption=response),
-            reply_markup=reply_markup,
-        )
+        await _update_or_replace_with_media(message, response, reply_markup, cover_url)
     else:
         await message.reply_text(response, reply_markup=reply_markup)
 
@@ -539,7 +617,7 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         options = parse_collage_args(context.args)
     except ValueError as e:
-        await message.reply_text(f"⚠️ {e}")
+        await message.reply_text(f"⚠️ {html.escape(str(e))}")
         return
 
     if options.preset:
@@ -580,7 +658,7 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception(f"Error generating collage: {e}")
         await message.reply_text(
-            emojize(responses.collage_error.substitute(error=str(e)))
+            emojize(responses.collage_error.substitute(error=html.escape(str(e))))
         )
     finally:
         try:
@@ -681,7 +759,7 @@ async def compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     if not context.args:
         await message.reply_text(
-            "Please provide a Last.fm username. Usage: /compare <lastfm_username>"
+            "Please provide a Last.fm username. Usage: <code>/compare &lt;lastfm_username&gt;</code>"
         )
         return
 

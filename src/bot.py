@@ -10,6 +10,8 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     Defaults,
+    MessageHandler,
+    filters,
 )
 
 import ai
@@ -54,7 +56,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     """Starts the bot."""
-    sentry_sdk.init(dsn=config.SENTRY_DSN, send_default_pii=True)
+    sentry_sdk.init(dsn=config.SENTRY_DSN, send_default_pii=False)
 
     defaults = Defaults(
         parse_mode=constants.ParseMode.HTML,
@@ -104,6 +106,13 @@ def main() -> None:
     app.add_handler(CommandHandler(commands.RECOMMEND_COMMAND, commands.recommend))
 
     app.add_handler(CallbackQueryHandler(commands.button_handler))
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND,
+            commands.track_group_member,
+        ),
+        group=1,
+    )
 
     # Add global error handler
     app.add_error_handler(error_handler)

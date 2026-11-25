@@ -34,8 +34,19 @@ class LastfmClient:
         )
 
     def get_user(self, username: str) -> User | None:
-        user = self.client.get_user(username)
-        return user
+        clean_username = (username or "").strip()
+        if not clean_username:
+            return None
+        try:
+            user = self.client.get_user(clean_username)
+            user.get_registered()
+            return user
+        except pylast.WSError as e:
+            logger.info(f"Last.fm user '{clean_username}' not found: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to validate Last.fm user '{clean_username}': {e}")
+            return None
 
     def get_now_playing(self, username: str) -> Track | None:
         clean_username = (username or "").strip()
@@ -60,18 +71,25 @@ class LastfmClient:
         """
         import urllib.parse
 
+        clean_name = (artist_name or "").strip()
+        if not clean_name:
+            return None
+
         try:
-            artist = self.client.get_artist(artist_name.strip())
-            canonical_name = artist.get_name()
+            artist = self.client.get_artist(clean_name)
+            canonical_name = artist.get_name(properly_capitalized=True)
             if not canonical_name:
-                canonical_name = artist_name.strip()
+                return None
             try:
                 url = artist.get_url()
             except Exception:
                 url = f"https://www.last.fm/music/{urllib.parse.quote_plus(canonical_name)}"
             return canonical_name, url
+        except pylast.WSError as e:
+            logger.warning(f"Last.fm artist '{clean_name}' not found: {e}")
+            return None
         except Exception as e:
-            logger.warning(f"Failed to resolve artist '{artist_name}': {e}")
+            logger.warning(f"Failed to resolve artist '{clean_name}': {e}")
             return None
 
     def get_user_artist_playcount(self, username: str, artist_name: str) -> int:

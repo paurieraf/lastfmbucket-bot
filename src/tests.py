@@ -376,7 +376,7 @@ class TestViewServiceCollage(unittest.IsolatedAsyncioTestCase):
             font_bold=True,
             filter_name="duotone",
         )
-        self.assertIn("neon, pill, sense text, bold, filtre duotone", caption)
+        self.assertIn("neon, pill, no text, bold, filter duotone", caption)
 
     def test_collage_caption_with_preset(self):
         caption = ViewService.build_collage_caption(

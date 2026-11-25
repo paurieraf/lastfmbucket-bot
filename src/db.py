@@ -29,7 +29,7 @@ db = SqliteExtDatabase(
         "cache_size": -1 * 64000,  # 64MB cache.
         "foreign_keys": 1,  # Enforce foreign-key constraints
         "ignore_check_constraints": 0,  # Enforce CHECK constraints
-        "synchronous": 0,  # Let the OS manage syncing.
+        "synchronous": 1,  # NORMAL durability (safe with WAL mode).
         "busy_timeout": 5000,  # Wait up to 5s on lock contention (admin process shares DB).
     },
 )
@@ -59,12 +59,12 @@ class Chat(Model):
 
 
 class CommandLog(Model):
-    user_id = BigIntegerField()
+    user_id = BigIntegerField(index=True)
     username = CharField(default="")
-    command = CharField()
+    command = CharField(index=True)
     args = CharField(default="")
     chat = ForeignKeyField(Chat, backref="command_logs", null=True)
-    timestamp = BigIntegerField()  # Unix timestamp
+    timestamp = BigIntegerField(index=True)  # Unix timestamp
 
     class Meta:
         database = db
@@ -133,6 +133,25 @@ def run_migrations(database=None) -> None:
         except Exception as e:
             logger.error(
                 f"Failed to migrate '{column_name}' on '{table_name}': {e}",
+                exc_info=True,
+            )
+
+    expected_indexes = [
+        ("commandlog", "idx_commandlog_timestamp", "timestamp"),
+        ("commandlog", "idx_commandlog_user_id", "user_id"),
+        ("commandlog", "idx_commandlog_command", "command"),
+    ]
+    for table_name, index_name, column_name in expected_indexes:
+        try:
+            cursor = target_db.execute_sql(f"PRAGMA table_info('{table_name}')")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            if existing_cols and column_name in existing_cols:
+                target_db.execute_sql(
+                    f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({column_name})"
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to create index '{index_name}' on '{table_name}': {e}",
                 exc_info=True,
             )
 
@@ -221,7 +240,8 @@ def get_user_by_username(username: str) -> User | None:
 
 def delete_user(telegram_user_id: int) -> None:
     """
-    Deletes a user from the database based on their Telegram user ID.
+    Deletes a user and all associated data (memberships, crowns, command logs)
+    from the database based on their Telegram user ID.
 
     :param telegram_user_id: The ID corresponding to a specific
         Telegram user.
@@ -230,8 +250,17 @@ def delete_user(telegram_user_id: int) -> None:
     with db.atomic():
         user = User.get_or_none(telegram_id=telegram_user_id)
         if user:
-            user.delete_instance()
+            user.delete_instance(recursive=True)
             logging.info(f"User with telegram_id {telegram_user_id} deleted.")
+        deleted_logs = (
+            CommandLog.delete()
+            .where(CommandLog.user_id == telegram_user_id)
+            .execute()
+        )
+        if deleted_logs:
+            logging.info(
+                f"Deleted {deleted_logs} command log(s) for telegram_id {telegram_user_id}."
+            )
 
 
 def toggle_user_group_opt_out(telegram_user_id: int) -> bool:
@@ -470,18 +499,22 @@ def log_command(
 def get_or_create_chat(
     telegram_chat_id: int, chat_name: str = "", chat_type: str = ""
 ) -> Chat:
-    """Gets or creates a chat entry in the database."""
+    """Gets or creates a chat entry in the database without overwriting non-empty metadata with empty values."""
     with db.atomic():
         chat, created = Chat.get_or_create(
             telegram_id=telegram_chat_id,
             defaults={"telegram_chat_name": chat_name, "chat_type": chat_type},
         )
-        if not created and (
-            chat.telegram_chat_name != chat_name or chat.chat_type != chat_type
-        ):
-            chat.telegram_chat_name = chat_name
-            chat.chat_type = chat_type
-            chat.save()
+        if not created:
+            updated = False
+            if chat_name and chat.telegram_chat_name != chat_name:
+                chat.telegram_chat_name = chat_name
+                updated = True
+            if chat_type and chat.chat_type != chat_type:
+                chat.chat_type = chat_type
+                updated = True
+            if updated:
+                chat.save()
     return chat
 
 
