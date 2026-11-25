@@ -38,11 +38,17 @@ class LastfmClient:
         return user
 
     def get_now_playing(self, username: str) -> Track | None:
-        now_playing = self.client.get_user(username).get_now_playing()
+        clean_username = (username or "").strip()
+        if not clean_username:
+            return None
+        now_playing = self.client.get_user(clean_username).get_now_playing()
         return now_playing
 
     def get_recent_tracks(self, username: str, limit: int = 10) -> list[PlayedTrack]:
-        recent_tracks = self.client.get_user(username).get_recent_tracks(
+        clean_username = (username or "").strip()
+        if not clean_username:
+            return []
+        recent_tracks = self.client.get_user(clean_username).get_recent_tracks(
             now_playing=True, limit=limit
         )
         return recent_tracks

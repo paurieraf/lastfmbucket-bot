@@ -838,5 +838,114 @@ class TestWhoknowsAndCrownsCommands(unittest.IsolatedAsyncioTestCase):
         mock_msg.reply_text.assert_awaited_once_with("🏆 Hall of Fame HTML")
 
 
+class TestUnlinkedPlaceholderUsers(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        import db
+
+        self.db = db
+        self.orig_db = db.db
+        from playhouse.sqlite_ext import SqliteExtDatabase
+
+        self.test_db = SqliteExtDatabase(":memory:")
+        self.db.db = self.test_db
+        self.db.db.bind(self.db.MODELS, bind_refs=False, bind_backrefs=False)
+        self.test_db.connect()
+        self.test_db.create_tables(self.db.MODELS)
+
+    def tearDown(self):
+        self.test_db.drop_tables(self.db.MODELS)
+        self.test_db.close()
+        self.db.db = self.orig_db
+        self.orig_db.bind(self.db.MODELS, bind_refs=False, bind_backrefs=False)
+
+    def test_get_linked_user_ignores_placeholder_user(self):
+        # track_chat_member creates a placeholder User with lastfm_username=""
+        self.db.track_chat_member(-1001, 6415612, "sdecandelario", "Gang", "group")
+        self.assertIsNotNone(self.db.get_user(6415612))
+        self.assertIsNone(self.db.get_linked_user(6415612))
+
+        # Whitespace-only username is also treated as unlinked
+        self.db.create_or_update_user(6415613, None, "   ")
+        self.assertIsNone(self.db.get_linked_user(6415613))
+
+        # Linking a real username makes get_linked_user return the User
+        self.db.create_or_update_user(6415612, "sdecandelario", "sergio_lfm")
+        linked = self.db.get_linked_user(6415612)
+        self.assertIsNotNone(linked)
+        self.assertEqual(linked.lastfm_username, "sergio_lfm")
+
+    async def test_np_command_with_placeholder_user_returns_user_not_found(self):
+        from lastfm import LastfmClient
+        from services import LastfmService
+
+        # Simulate @log_command creating a placeholder User row on first /np
+        mock_client = MagicMock(spec=LastfmClient)
+        lastfm_service = LastfmService(mock_client)
+        view_service = ViewService(lastfm_service)
+
+        mock_update = MagicMock(spec=Update)
+        mock_update.callback_query = None
+        mock_msg = MagicMock()
+        mock_msg.reply_text = AsyncMock()
+        mock_update.effective_message = mock_msg
+        mock_update.effective_chat = MagicMock(id=-1001, type="group", title="Gang")
+        mock_update.effective_user = MagicMock(id=6415612, username="sdecandelario")
+
+        mock_context = MagicMock()
+        mock_context.args = []
+        mock_context.bot_data = {"view_service": view_service}
+
+        await commands.now_playing(mock_update, mock_context)
+
+        mock_client.get_now_playing.assert_not_called()
+        mock_msg.reply_text.assert_awaited_once()
+        reply_text = mock_msg.reply_text.await_args.args[0]
+        self.assertIn("/set [username]", reply_text)
+
+    async def test_services_and_views_ignore_placeholder_user(self):
+        from lastfm import EntityType, LastfmClient, Period as LfmPeriod
+        from services import LastfmService
+
+        self.db.track_chat_member(-1001, 6415612, "sdecandelario", "Gang", "group")
+        mock_client = MagicMock(spec=LastfmClient)
+        lastfm_service = LastfmService(mock_client)
+        view_service = ViewService(lastfm_service)
+
+        self.assertEqual(await lastfm_service.get_now_playing(6415612), (None, None))
+        self.assertIsNone(await lastfm_service.get_recent_tracks(6415612))
+        self.assertIsNone(
+            await lastfm_service.get_tops(6415612, EntityType.ARTIST, LfmPeriod.WEEK)
+        )
+        mock_client.get_now_playing.assert_not_called()
+        mock_client.get_recent_tracks.assert_not_called()
+
+        tg_user = MagicMock(spec=TgUser, id=6415612, username="sdecandelario")
+        start_msg = await view_service.build_start_response(tg_user)
+        self.assertIn("Use /set [username]", start_msg)
+
+        status_msg, _, _ = await view_service.build_status_response(6415612)
+        self.assertIn("/set [username]", status_msg)
+
+        tops_msg, _ = await view_service.build_tops_response(
+            6415612, EntityType.ARTIST, LfmPeriod.WEEK
+        )
+        self.assertIn("/set [username]", tops_msg)
+
+        compare_msg = await view_service.build_compare_response(6415612, "other_user")
+        self.assertIn("set your Last.fm username first", compare_msg)
+
+    def test_lastfm_client_guards_empty_username(self):
+        from lastfm import LastfmClient
+
+        client = LastfmClient.__new__(LastfmClient)
+        client.client = MagicMock()
+
+        self.assertIsNone(client.get_now_playing(""))
+        self.assertIsNone(client.get_now_playing("   "))
+        self.assertEqual(client.get_recent_tracks(""), [])
+        self.assertEqual(client.get_recent_tracks("   "), [])
+        client.client.get_user.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

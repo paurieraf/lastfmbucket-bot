@@ -174,7 +174,7 @@ async def _handle_collage(
 
     # If style step was confirmed (Skip), generate collage
     if cb.entity and (cb.size or cb.preset) and cb.period and cb.style == "skip":
-        user = db.get_user(user_id)
+        user = db.get_linked_user(user_id)
         if not user:
             await query.edit_message_text(
                 emojize(responses.user_not_found.substitute())
@@ -519,7 +519,7 @@ async def collage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"username: {user.username} - issued command: {message.text or COLLAGE_COMMAND}"
     )
     user_id = user.id
-    db_user = db.get_user(user_id)
+    db_user = db.get_linked_user(user_id)
     if not db_user:
         await message.reply_text(emojize(responses.user_not_found.substitute()))
         return
@@ -930,7 +930,7 @@ async def crowns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     if is_mycrowns:
-        caller_user = db.get_user(user.id)
+        caller_user = db.get_linked_user(user.id)
         if not caller_user:
             await message.reply_text(emojize(responses.user_not_found.substitute()))
             return

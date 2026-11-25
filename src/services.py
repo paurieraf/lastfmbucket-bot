@@ -71,10 +71,14 @@ class LastfmService:
         self._lastfm_client = lastfm_client
 
     async def set_lastfm_username(
-        self, telegram_user_id: int, telegram_username: str, lastfm_username: str
+        self, telegram_user_id: int, telegram_username: str | None, lastfm_username: str
     ) -> tuple[db.User | None, bool]:
+        clean_lastfm_username = (lastfm_username or "").strip()
+        if not clean_lastfm_username:
+            return None, False
+
         lastfm_user = await _run_lastfm_call(
-            self._lastfm_client.get_user, lastfm_username
+            self._lastfm_client.get_user, clean_lastfm_username
         )
         if not lastfm_user:
             return None, False
@@ -82,14 +86,14 @@ class LastfmService:
         user = db.create_or_update_user(
             telegram_user_id=telegram_user_id,
             telegram_username=telegram_username,
-            lastfm_username=lastfm_username,
+            lastfm_username=clean_lastfm_username,
         )
         return user, True
 
     async def get_now_playing(
         self, telegram_user_id: int
     ) -> tuple[db.User | None, pylast.Track | None]:
-        user = db.get_user(telegram_user_id)
+        user = db.get_linked_user(telegram_user_id)
         if not user:
             return None, None
 
@@ -101,7 +105,7 @@ class LastfmService:
     async def get_recent_tracks(
         self, telegram_user_id: int
     ) -> list[pylast.PlayedTrack] | None:
-        user = db.get_user(telegram_user_id)
+        user = db.get_linked_user(telegram_user_id)
         if not user:
             return None
 
@@ -119,7 +123,7 @@ class LastfmService:
         period: Period,
         extended_limit: bool = False,
     ) -> list[pylast.TopItem] | None:
-        user = db.get_user(telegram_user_id)
+        user = db.get_linked_user(telegram_user_id)
         if not user:
             return None
 
@@ -177,7 +181,7 @@ class ViewService:
 
     @staticmethod
     async def build_start_response(telegram_user: telegram.User) -> str:
-        user = db.get_user(telegram_user.id)
+        user = db.get_linked_user(telegram_user.id)
         if not user:
             setup_lastfm_user_text = "Use /set [username] to set your Last.fm username."
         else:
@@ -273,7 +277,7 @@ class ViewService:
         self, telegram_user_id: int, show_cover: bool = False
     ) -> tuple[str, telegram.InlineKeyboardMarkup | None, str | None]:
         recent_tracks = await self.lastfm_service.get_recent_tracks(telegram_user_id)
-        user = db.get_user(telegram_user_id)
+        user = db.get_linked_user(telegram_user_id)
         if not recent_tracks or not user:
             response = responses.user_not_found.substitute()
             return emojize(response), None, None
@@ -404,8 +408,11 @@ class ViewService:
                 responses.tops_choose_period.substitute(entity_type=entity_type)
             ), reply_markup
 
+        user = db.get_linked_user(telegram_user_id)
+        if not user:
+            return emojize(responses.user_not_found.substitute()), None
+
         tops = await self.lastfm_service.get_tops(telegram_user_id, entity_type, period)
-        user = db.get_user(telegram_user_id)
         if not tops:
             return emojize(
                 responses.tops_no_available_response.substitute(
@@ -513,7 +520,7 @@ class ViewService:
         self, telegram_user_id: int, other_lastfm_username: str
     ) -> str:
         """Builds the compare response between two users."""
-        user = db.get_user(telegram_user_id)
+        user = db.get_linked_user(telegram_user_id)
         if not user:
             return emojize(responses.compare_no_lastfm_set.substitute())
 

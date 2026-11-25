@@ -147,7 +147,7 @@ DB Methods
 
 
 def create_or_update_user(
-    telegram_user_id: int, telegram_username: str, lastfm_username: str | None
+    telegram_user_id: int, telegram_username: str | None, lastfm_username: str | None
 ) -> User:
     """
     Creates or updates a user in the database based on the given parameters. If the
@@ -161,18 +161,20 @@ def create_or_update_user(
         can be None.
     :return: The User object that was created or updated.
     """
+    clean_tg_username = telegram_username or ""
+    clean_lfm_username = (lastfm_username or "").strip()
     with db.atomic():
         user, created = User.get_or_create(
             telegram_id=telegram_user_id,
             defaults={
-                "telegram_username": telegram_username,
-                "lastfm_username": lastfm_username,
+                "telegram_username": clean_tg_username,
+                "lastfm_username": clean_lfm_username,
             },
         )
 
         if not created:
-            user.telegram_username = telegram_username
-            user.lastfm_username = lastfm_username
+            user.telegram_username = clean_tg_username
+            user.lastfm_username = clean_lfm_username
             user.save()
             logging.info(f"User updated: {user}")
         else:
@@ -191,6 +193,17 @@ def get_user(telegram_user_id: int) -> User | None:
     :rtype: User
     """
     return User.get_or_none(telegram_id=telegram_user_id)
+
+
+def get_linked_user(telegram_user_id: int) -> User | None:
+    """
+    Retrieves a user from the database only if they have linked a non-empty
+    Last.fm username (ignoring placeholder rows created by chat tracking).
+    """
+    user = get_user(telegram_user_id)
+    if not user or not (user.lastfm_username or "").strip():
+        return None
+    return user
 
 
 def get_user_by_username(username: str) -> User | None:
