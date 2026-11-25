@@ -105,6 +105,23 @@ class LoginRateLimiter:
         self._attempts.pop(key, None)
         return False, 0
 
+    def _prune_expired(self, now: float) -> None:
+        """Evict expired entries when tracking maps grow large."""
+        if len(self._attempts) < 512 and len(self._locked_until) < 512:
+            return
+        for k, until in list(self._locked_until.items()):
+            if now >= until:
+                self._locked_until.pop(k, None)
+                self._attempts.pop(k, None)
+        for k, timestamps in list(self._attempts.items()):
+            if k in self._locked_until:
+                continue
+            recent = [ts for ts in timestamps if now - ts < self.window_seconds]
+            if recent:
+                self._attempts[k] = recent
+            else:
+                self._attempts.pop(k, None)
+
     def record_failure(self, key: str) -> tuple[bool, int]:
         """Record a failed login attempt and return (is_locked, remaining_seconds)."""
         locked, remaining = self.is_locked(key)
@@ -112,6 +129,7 @@ class LoginRateLimiter:
             return True, remaining
 
         now = self._clock()
+        self._prune_expired(now)
         recent = [
             ts for ts in self._attempts.get(key, []) if now - ts < self.window_seconds
         ]
@@ -141,7 +159,10 @@ login_rate_limiter = LoginRateLimiter()
 def get_client_rate_limit_key(client: Client | None = None) -> str:
     """Resolve a stable rate-limit key from client IP, forwarded headers, or browser."""
     if client is not None:
-        request = getattr(client, "request", None)
+        try:
+            request = getattr(client, "request", None)
+        except RuntimeError:
+            request = None
         if request is not None:
             headers = getattr(request, "headers", None)
             if headers:
@@ -214,7 +235,7 @@ def fetch_command_log_rows(
 
     rows: list[dict] = []
     for c in query:
-        chat = c.chat if c.chat_id is not None else None
+        chat = c.__rel__.get("chat") if c.chat_id is not None else None
         rows.append(
             {
                 "id": c.id,
@@ -248,8 +269,8 @@ def fetch_crown_rows(
 
     rows: list[dict] = []
     for crown in query:
-        chat = crown.chat if crown.chat_id is not None else None
-        user = crown.user if crown.user_id is not None else None
+        chat = crown.__rel__.get("chat") if crown.chat_id is not None else None
+        user = crown.__rel__.get("user") if crown.user_id is not None else None
         if user is None:
             holder = "-"
         else:
@@ -291,8 +312,8 @@ def fetch_chat_member_rows(
 
     rows: list[dict] = []
     for member in query:
-        chat = member.chat if member.chat_id is not None else None
-        user = member.user if member.user_id is not None else None
+        chat = member.__rel__.get("chat") if member.chat_id is not None else None
+        user = member.__rel__.get("user") if member.user_id is not None else None
         rows.append(
             {
                 "id": member.id,
@@ -365,10 +386,16 @@ def open_confirm_dialog(
         ui.label(title).classes("text-lg font-bold")
         ui.label(message).classes("text-sm text-gray-700 my-2")
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
-            ui.button("Cancel", on_click=dialog.close).props("flat")
+
+            def handle_cancel():
+                dialog.close()
+                dialog.delete()
+
+            ui.button("Cancel", on_click=handle_cancel).props("flat")
 
             def handle_confirm():
                 dialog.close()
+                dialog.delete()
                 on_confirm()
 
             ui.button("Confirm Delete", on_click=handle_confirm).props("color=negative")
