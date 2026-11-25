@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-11-25
+
+### Fixed
+- **Unlinked placeholder users handling**: Added `db.get_linked_user` and empty-username guards across `LastfmService`, `ViewService`, `LastfmClient`, and command handlers (`/np`, `/status`, `/tops`, `/collage`, `/compare`, `/vibe`, `/roast`, `/recommend`, `/whoknows`, `/mycrowns`, `/start`) so users auto-tracked in chats without a linked Last.fm account receive the `/set` prompt instead of triggering a Last.fm `WSError` (`400 Bad Request`).
+- Normalized optional Telegram usernames (`None` -> `""`) and trimmed Last.fm usernames when saving users.
+
 ## [0.4.0] - 2026-08-17
 
 ### Added
