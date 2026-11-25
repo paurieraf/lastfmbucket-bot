@@ -1,4 +1,6 @@
+from contextlib import contextmanager
 import logging
+import threading
 
 from peewee import (
     BigIntegerField,
@@ -14,6 +16,8 @@ from playhouse.sqlite_ext import SqliteExtDatabase
 import config
 
 logger = logging.getLogger(__name__)
+
+_DB_WRITE_LOCK = threading.RLock()
 
 """
 Globals variables
@@ -143,9 +147,26 @@ def run_migrations(database=None) -> None:
             cursor = target_db.execute_sql(f"PRAGMA table_info('{table_name}')")
             existing_cols = {row[1] for row in cursor.fetchall()}
             if existing_cols and column_name in existing_cols:
-                target_db.execute_sql(
-                    f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({column_name})"
-                )
+                # Skip creating a duplicate index if a single-column index already covers this column.
+                idx_rows = target_db.execute_sql(
+                    f"PRAGMA index_list('{table_name}')"
+                ).fetchall()
+                already_indexed = False
+                for idx_row in idx_rows:
+                    existing_idx_name = idx_row[1]
+                    idx_cols = [
+                        col_row[2]
+                        for col_row in target_db.execute_sql(
+                            f"PRAGMA index_info('{existing_idx_name}')"
+                        ).fetchall()
+                    ]
+                    if idx_cols == [column_name]:
+                        already_indexed = True
+                        break
+                if not already_indexed:
+                    target_db.execute_sql(
+                        f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({column_name})"
+                    )
         except Exception as e:
             logger.error(
                 f"Failed to create index '{index_name}' on '{table_name}': {e}",
@@ -156,6 +177,27 @@ def run_migrations(database=None) -> None:
 db.connect()
 db.create_tables(MODELS, safe=True)
 run_migrations()
+
+
+@contextmanager
+def _db_connection():
+    """Open a thread-local connection if needed and close it only if this call opened it."""
+    opened = db.is_closed()
+    if opened:
+        db.connect(reuse_if_open=True)
+    try:
+        yield
+    finally:
+        if opened and not db.in_transaction():
+            db.close()
+
+
+@contextmanager
+def _write_transaction():
+    """Serialize in-process SQLite writes with BEGIN IMMEDIATE and safe thread connection handling."""
+    with _DB_WRITE_LOCK, _db_connection(), db.atomic("IMMEDIATE"):
+        yield
+
 
 """
 DB Methods
@@ -179,7 +221,7 @@ def create_or_update_user(
     """
     clean_tg_username = telegram_username or ""
     clean_lfm_username = (lastfm_username or "").strip()
-    with db.atomic():
+    with _write_transaction():
         user, created = User.get_or_create(
             telegram_id=telegram_user_id,
             defaults={
@@ -208,7 +250,8 @@ def get_user(telegram_user_id: int) -> User | None:
     :return: The user object associated with the given Telegram ID.
     :rtype: User
     """
-    return User.get_or_none(telegram_id=telegram_user_id)
+    with _db_connection():
+        return User.get_or_none(telegram_id=telegram_user_id)
 
 
 def get_linked_user(telegram_user_id: int) -> User | None:
@@ -232,7 +275,10 @@ def get_user_by_username(username: str) -> User | None:
     clean_username = username.lstrip("@").strip()
     if not clean_username:
         return None
-    return User.get_or_none(fn.Lower(User.telegram_username) == clean_username.lower())
+    with _db_connection():
+        return User.get_or_none(
+            fn.Lower(User.telegram_username) == clean_username.lower()
+        )
 
 
 def delete_user(telegram_user_id: int) -> None:
@@ -244,7 +290,7 @@ def delete_user(telegram_user_id: int) -> None:
         Telegram user.
     :type telegram_user_id: int
     """
-    with db.atomic():
+    with _write_transaction():
         user = User.get_or_none(telegram_id=telegram_user_id)
         if user:
             user.delete_instance(recursive=True)
@@ -265,7 +311,7 @@ def toggle_user_group_opt_out(telegram_user_id: int) -> bool:
     Toggles the group ranking opt_out setting for a user.
     Returns the new opt_out status (True if opted out, False if visible).
     """
-    with db.atomic():
+    with _write_transaction():
         user = User.get_or_none(telegram_id=telegram_user_id)
         if not user:
             return False
@@ -294,7 +340,7 @@ def track_chat_member(
     if chat_id == 0 or user_id == 0:
         return None
 
-    with db.atomic():
+    with _write_transaction():
         chat = get_or_create_chat(chat_id, chat_name, chat_type)
         user = User.get_or_none(telegram_id=user_id)
         if not user:
@@ -325,39 +371,41 @@ def get_linked_chat_members(chat_id: int) -> list[User]:
     """
     Retrieves all active, non-opt-out users in a chat who have linked Last.fm accounts.
     """
-    chat = Chat.get_or_none(telegram_id=chat_id)
-    if not chat:
-        return []
+    with _db_connection():
+        chat = Chat.get_or_none(telegram_id=chat_id)
+        if not chat:
+            return []
 
-    query = (
-        User.select()
-        .join(ChatMember, on=(ChatMember.user == User.id))
-        .where(
-            (ChatMember.chat == chat)
-            & (~ChatMember.opt_out)
-            & (~User.group_opt_out)
-            & (User.lastfm_username != "")
-            & (User.lastfm_username.is_null(False))
+        query = (
+            User.select()
+            .join(ChatMember, on=(ChatMember.user == User.id))
+            .where(
+                (ChatMember.chat == chat)
+                & (~ChatMember.opt_out)
+                & (~User.group_opt_out)
+                & (User.lastfm_username != "")
+                & (User.lastfm_username.is_null(False))
+            )
         )
-    )
-    return list(query)
+        return list(query)
 
 
 def get_crown(chat_id: int, artist_name: str) -> Crown | None:
     """
     Retrieves the current crown holder for an artist in a chat.
     """
-    chat = Chat.get_or_none(telegram_id=chat_id)
-    if not chat:
-        return None
-    return (
-        Crown.select()
-        .where(
-            (Crown.chat == chat)
-            & (fn.Lower(Crown.artist_name) == artist_name.strip().lower())
+    with _db_connection():
+        chat = Chat.get_or_none(telegram_id=chat_id)
+        if not chat:
+            return None
+        return (
+            Crown.select()
+            .where(
+                (Crown.chat == chat)
+                & (fn.Lower(Crown.artist_name) == artist_name.strip().lower())
+            )
+            .first()
         )
-        .first()
-    )
 
 
 def upsert_crown(
@@ -370,7 +418,7 @@ def upsert_crown(
     import time
 
     now = int(time.time())
-    with db.atomic():
+    with _write_transaction():
         chat = get_or_create_chat(chat_id)
         existing_crown = (
             Crown.select()
@@ -417,77 +465,79 @@ def get_chat_crowns_leaderboard(chat_id: int, limit: int = 10) -> list[dict]:
     Retrieves the crowns leaderboard for a chat (users with the most crowns).
     Returns list of dicts with user, crown_count, and samples.
     """
-    chat = Chat.get_or_none(telegram_id=chat_id)
-    if not chat:
-        return []
+    with _db_connection():
+        chat = Chat.get_or_none(telegram_id=chat_id)
+        if not chat:
+            return []
 
-    # Query 2: Eagerly join User and count crowns per user
-    crown_counts = list(
-        Crown.select(Crown.user, User, fn.COUNT(Crown.id).alias("count"))
-        .join(User)
-        .where(Crown.chat == chat)
-        .group_by(Crown.user)
-        .order_by(SQL("count DESC"))
-        .limit(limit)
-    )
-    if not crown_counts:
-        return []
+        # Query 2: Eagerly join User and count crowns per user
+        crown_counts = list(
+            Crown.select(Crown.user, User, fn.COUNT(Crown.id).alias("count"))
+            .join(User)
+            .where(Crown.chat == chat)
+            .group_by(Crown.user)
+            .order_by(SQL("count DESC"))
+            .limit(limit)
+        )
+        if not crown_counts:
+            return []
 
-    # Query 3: Single batched window-function query for top-3 sample crowns per user
-    user_ids = [entry.user_id for entry in crown_counts]
-    placeholders = ", ".join("?" for _ in user_ids)
-    cursor = db.execute_sql(
-        f"""
-        SELECT user_id, artist_name, artist_url, playcount
-        FROM (
-            SELECT
-                user_id,
-                artist_name,
-                artist_url,
-                playcount,
-                ROW_NUMBER() OVER (
-                    PARTITION BY user_id
-                    ORDER BY playcount DESC, id ASC
-                ) AS rn
-            FROM crown
-            WHERE chat_id = ? AND user_id IN ({placeholders})
-        ) ranked
-        WHERE rn <= 3
-        ORDER BY user_id, rn ASC
-        """,
-        [chat.id, *user_ids],
-    )
-
-    samples_by_user: dict[int, list[dict]] = {}
-    for user_id, artist_name, artist_url, playcount in cursor.fetchall():
-        samples_by_user.setdefault(user_id, []).append(
-            {"name": artist_name, "url": artist_url, "plays": playcount}
+        # Query 3: Single batched window-function query for top-3 sample crowns per user
+        user_ids = [entry.user_id for entry in crown_counts]
+        placeholders = ", ".join("?" for _ in user_ids)
+        cursor = db.execute_sql(
+            f"""
+            SELECT user_id, artist_name, artist_url, playcount
+            FROM (
+                SELECT
+                    user_id,
+                    artist_name,
+                    artist_url,
+                    playcount,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY user_id
+                        ORDER BY playcount DESC, id ASC
+                    ) AS rn
+                FROM crown
+                WHERE chat_id = ? AND user_id IN ({placeholders})
+            ) ranked
+            WHERE rn <= 3
+            ORDER BY user_id, rn ASC
+            """,
+            [chat.id, *user_ids],
         )
 
-    return [
-        {
-            "user": entry.user,
-            "crown_count": entry.count,
-            "samples": samples_by_user.get(entry.user_id, []),
-        }
-        for entry in crown_counts
-    ]
+        samples_by_user: dict[int, list[dict]] = {}
+        for user_id, artist_name, artist_url, playcount in cursor.fetchall():
+            samples_by_user.setdefault(user_id, []).append(
+                {"name": artist_name, "url": artist_url, "plays": playcount}
+            )
+
+        return [
+            {
+                "user": entry.user,
+                "crown_count": entry.count,
+                "samples": samples_by_user.get(entry.user_id, []),
+            }
+            for entry in crown_counts
+        ]
 
 
 def get_user_crowns(chat_id: int, user_id: int) -> list[Crown]:
     """
     Retrieves all crowns held by a specific user in a chat.
     """
-    chat = Chat.get_or_none(telegram_id=chat_id)
-    user = User.get_or_none(telegram_id=user_id)
-    if not chat or not user:
-        return []
+    with _db_connection():
+        chat = Chat.get_or_none(telegram_id=chat_id)
+        user = User.get_or_none(telegram_id=user_id)
+        if not chat or not user:
+            return []
 
-    return list(
-        Crown.select()
-        .where((Crown.chat == chat) & (Crown.user == user))
-        .order_by(Crown.playcount.desc())
-    )
+        return list(
+            Crown.select()
+            .where((Crown.chat == chat) & (Crown.user == user))
+            .order_by(Crown.playcount.desc())
+        )
 
 
 def log_command(
@@ -502,7 +552,7 @@ def log_command(
     """Logs a command execution to the database and tracks chat membership."""
     import time
 
-    with db.atomic():
+    with _write_transaction():
         chat = get_or_create_chat(chat_id, chat_name, chat_type)
         log_entry = CommandLog.create(
             user_id=user_id,
@@ -512,8 +562,8 @@ def log_command(
             chat=chat,
             timestamp=int(time.time()),
         )
-    # Track chat membership
-    track_chat_member(chat_id, user_id, username, chat_name, chat_type)
+        # Track chat membership in the same atomic write transaction
+        track_chat_member(chat_id, user_id, username, chat_name, chat_type)
     return log_entry
 
 
@@ -521,7 +571,7 @@ def get_or_create_chat(
     telegram_chat_id: int, chat_name: str = "", chat_type: str = ""
 ) -> Chat:
     """Gets or creates a chat entry in the database without overwriting non-empty metadata with empty values."""
-    with db.atomic():
+    with _write_transaction():
         chat, created = Chat.get_or_create(
             telegram_id=telegram_chat_id,
             defaults={"telegram_chat_name": chat_name, "chat_type": chat_type},
@@ -543,7 +593,7 @@ def create_or_update_chat(telegram_chat_id: int, telegram_chat_name: str) -> Cha
     """
     Creates or updates a chat entry in the database.
     """
-    with db.atomic():
+    with _write_transaction():
         chat, created = Chat.get_or_create(
             telegram_id=telegram_chat_id,
             defaults={"telegram_chat_name": telegram_chat_name},

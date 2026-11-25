@@ -188,6 +188,57 @@ class TestOffloadedBlockingIO(unittest.IsolatedAsyncioTestCase):
         called_funcs = [c.args[0] for c in spy_thread.await_args_list]
         self.assertEqual(called_funcs, [mock_get, mock_track])
 
+    async def test_concurrent_wal_writes_via_to_thread_never_lock(self):
+        orig_db = db.db
+        tmp_dir = tempfile.TemporaryDirectory()
+        db_path = Path(tmp_dir.name) / "wal_concurrency.db"
+        wal_db = SqliteExtDatabase(
+            str(db_path),
+            pragmas={
+                "journal_mode": "wal",
+                "foreign_keys": 1,
+                "synchronous": 1,
+                "busy_timeout": 5000,
+            },
+        )
+        db.db = wal_db
+        wal_db.bind(db.MODELS, bind_refs=False, bind_backrefs=False)
+        wal_db.connect()
+        wal_db.create_tables(db.MODELS)
+        try:
+            tasks = [
+                asyncio.to_thread(
+                    db.log_command,
+                    user_id=1000 + (i % 5),
+                    username=f"user{i % 5}",
+                    command="np",
+                    args="",
+                    chat_id=-2001,
+                    chat_type="supergroup",
+                    chat_name="Concurrent Club",
+                )
+                for i in range(40)
+            ] + [
+                asyncio.to_thread(
+                    db.track_chat_member,
+                    -2001,
+                    1000 + (i % 5),
+                    f"user{i % 5}",
+                    "Concurrent Club",
+                    "supergroup",
+                )
+                for i in range(40)
+            ]
+            results = await asyncio.gather(*tasks)
+            self.assertEqual(len(results), 80)
+            self.assertEqual(db.CommandLog.select().count(), 40)
+            self.assertEqual(db.ChatMember.select().count(), 5)
+        finally:
+            wal_db.close()
+            db.db = orig_db
+            orig_db.bind(db.MODELS, bind_refs=False, bind_backrefs=False)
+            tmp_dir.cleanup()
+
 
 class TestCompareOptimization(unittest.IsolatedAsyncioTestCase):
     def test_compute_common_artists_case_insensitive_order_and_limit(self):

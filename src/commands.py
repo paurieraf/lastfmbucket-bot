@@ -186,7 +186,7 @@ async def _handle_collage(
         size_str = preset_str or cb.size or "3x3"
 
         await query.edit_message_text(
-            f"🎨 Generating your {size_str} {entity_str} collage..."
+            f"🎨 Generating your {html.escape(size_str)} {html.escape(entity_str)} collage..."
         )
         if update.effective_chat:
             try:
